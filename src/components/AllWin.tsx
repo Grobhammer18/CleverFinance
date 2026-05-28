@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { flushSync } from 'react-dom';
 import OnboardingWizard from './OnboardingWizard';
 import type { LevelUpMode, OnboardingV2Payload } from '../onboarding/onboardingLogic';
 import { notgroschenTargetFromIncome, sharesFromOnboardingInvest } from '../onboarding/onboardingLogic';
@@ -57,6 +58,67 @@ function readGuestDailyVermogenSnapshots(): DailyVermogenSnapshot[] {
  * Wenn `.env` auf `http://localhost:4242` zeigt, die App aber über LAN-IP geöffnet ist, würde der Browser
  * `localhost` auf dem falschen Gerät ansprechen — im Dev weichen wir auf den Proxy aus.
  */
+function onboardingDoneStorageKey(userId: string) {
+  return `allwin.onboardingDone.${userId}`;
+}
+
+function onboardingDoneEmailKey(email: string) {
+  return `allwin.onboardingDone.email.${email.trim().toLowerCase()}`;
+}
+
+function readLocalOnboardingDone(userId: string | undefined, email?: string | undefined) {
+  try {
+    if (userId && localStorage.getItem(onboardingDoneStorageKey(userId)) === '1') return true;
+    if (email && localStorage.getItem(onboardingDoneEmailKey(email)) === '1') return true;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function writeLocalOnboardingDone(userId: string | undefined, email?: string | undefined) {
+  try {
+    if (userId) localStorage.setItem(onboardingDoneStorageKey(userId), '1');
+    if (email) localStorage.setItem(onboardingDoneEmailKey(email), '1');
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Bestehende Cloud-Daten ohne onboarding.done (Beta-Migration). */
+function inferOnboardingDoneFromAppState(state: Record<string, unknown>): boolean {
+  const hasDebts = Array.isArray(state.debts) && state.debts.length > 0;
+  const hasTx = Array.isArray(state.transactions) && state.transactions.length > 0;
+  const ng = state.notgroschen;
+  const hasNg =
+    ng != null &&
+    typeof ng === 'object' &&
+    (((ng as { balance?: unknown }).balance != null && Number((ng as { balance: number }).balance) > 0) ||
+      ((ng as { target?: unknown }).target != null && Number((ng as { target: number }).target) > 0));
+  const ps = state.portfolioShares;
+  const hasPs = ps != null && typeof ps === 'object' && Object.keys(ps as object).length > 0;
+  const port = state.portfolio;
+  const hasPort = typeof port === 'number' && port > 0;
+  return hasDebts || hasTx || hasNg || hasPs || hasPort;
+}
+
+/** Cloud + lokales Gerät: Onboarding gilt als erledigt. */
+function resolveOnboardingDoneFromCloud(
+  ob: unknown,
+  userId: string | undefined,
+  email?: string | undefined,
+  fullState?: Record<string, unknown>,
+): boolean {
+  if (ob && typeof ob === 'object') {
+    const o = ob as { done?: unknown; v2?: unknown };
+    const obDone = o.done === true || o.done === 'true' || o.done === 1;
+    const hasV2 = o.v2 != null && typeof o.v2 === 'object';
+    if (obDone || hasV2) return true;
+  }
+  if (fullState && inferOnboardingDoneFromAppState(fullState)) return true;
+  return readLocalOnboardingDone(userId, email);
+}
+
 function resolveBillingApiBase(): string {
   const raw = String(import.meta.env.VITE_BILLING_API_URL || '')
     .trim()
@@ -1319,7 +1381,8 @@ export default function AllWin() {
     setHydrating(true);
     setCloudUserStateReady(false);
     cloudOnboardingHydratedRef.current = false;
-  }, [authUser?.id, authToken]);
+    setOnboardingDone(readLocalOnboardingDone(authUser.id, authUser.email));
+  }, [authUser?.id, authUser?.email, authToken]);
 
   const chartTimelineEndMs = useMemo(
     () => inferChartTimelineEndMs(transactions, portfolioTrades, dailyVermogenSnapshots),
@@ -1595,6 +1658,11 @@ export default function AllWin() {
         });
         if (!res.ok) {
           showToast('Cloud-Daten konnten nicht geladen werden. Bitte neu anmelden.', 'error');
+          const doneOffline = readLocalOnboardingDone(authUser.id, authUser.email);
+          flushSync(() => {
+            if (doneOffline) setOnboardingDone(true);
+          });
+          cloudOnboardingHydratedRef.current = true;
           setCloudUserStateReady(true);
           return;
         }
@@ -1619,15 +1687,24 @@ export default function AllWin() {
         } else {
           setOnboardingV2(null);
         }
-        const obDone = ob?.done === true || ob?.done === 'true' || ob?.done === 1;
-        const localDoneKey = authUser?.id ? `allwin.onboardingDone.${authUser.id}` : '';
-        const localDone = localDoneKey && localStorage.getItem(localDoneKey) === '1';
-        const done = obDone || localDone;
-        if (done) {
-          setOnboardingDone(true);
-          if (localDoneKey) localStorage.setItem(localDoneKey, '1');
-        } else {
-          setOnboardingDone(false);
+        const done = resolveOnboardingDoneFromCloud(ob, authUser.id, authUser.email, state);
+        const hasV2 = ob?.v2 != null && typeof ob.v2 === 'object';
+        const obDoneFlag = ob?.done === true || ob?.done === 'true' || ob?.done === 1;
+        flushSync(() => {
+          setOnboardingDone(done);
+        });
+        if (done) writeLocalOnboardingDone(authUser.id, authUser.email);
+        if (done && !obDoneFlag && authToken) {
+          void fetch(`${BILLING_API}/api/user/state`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({
+              state: { onboarding: { done: true, ...(hasV2 ? { v2: ob.v2 } : {}) } },
+            }),
+          });
         }
         const ng = state.notgroschen;
         if (ng && typeof ng === 'object') {
@@ -1715,7 +1792,11 @@ export default function AllWin() {
             dailyVermogenSnapshots,
       };
       if (cloudOnboardingHydratedRef.current) {
-        statePayload.onboarding = { done: onboardingDone, v2: onboardingV2 };
+        const persistDone =
+          onboardingDone ||
+          readLocalOnboardingDone(authUser.id, authUser.email) ||
+          (onboardingV2 != null && typeof onboardingV2 === 'object');
+        statePayload.onboarding = { done: persistDone, v2: onboardingV2 };
       }
       void fetch(`${BILLING_API}/api/user/state`, {
         method: 'PUT',
@@ -1932,13 +2013,8 @@ export default function AllWin() {
       if (sh) setPortfolioShares(normalizePortfolioShares(sh, tradableMarket));
     }
     setOnboardingDone(true);
-    if (authUser?.id) {
-      try {
-        localStorage.setItem(`allwin.onboardingDone.${authUser.id}`, '1');
-      } catch {
-        /* ignore */
-      }
-    }
+    writeLocalOnboardingDone(authUser?.id, authUser?.email);
+    cloudOnboardingHydratedRef.current = true;
     setTab('dashboard');
     if (authToken) {
       void fetch(`${BILLING_API}/api/user/state`, {
@@ -1953,7 +2029,7 @@ export default function AllWin() {
           },
         }),
       }).catch(() => {
-        /* debounced sync retries */
+        showToast('Onboarding gespeichert — Sync folgt beim nächsten Laden.', 'success');
       });
     }
     if (typeof window !== 'undefined' && !localStorage.getItem(APP_TOUR_STORAGE_KEY)) {
@@ -1983,9 +2059,10 @@ export default function AllWin() {
     setWizardRemount((n) => n + 1);
     setProfileSection('overview');
     setTab('dashboard');
-    if (authUser?.id) {
+    if (authUser?.id || authUser?.email) {
       try {
-        localStorage.removeItem(`allwin.onboardingDone.${authUser.id}`);
+        if (authUser.id) localStorage.removeItem(onboardingDoneStorageKey(authUser.id));
+        if (authUser.email) localStorage.removeItem(onboardingDoneEmailKey(authUser.email));
       } catch {
         /* ignore */
       }
@@ -2499,6 +2576,7 @@ export default function AllWin() {
     setAuthGate('welcome');
     setCloudUserStateReady(false);
     setHydrating(false);
+    setOnboardingDone(false);
     cloudOnboardingHydratedRef.current = false;
   };
 

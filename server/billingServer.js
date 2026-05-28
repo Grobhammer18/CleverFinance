@@ -122,6 +122,35 @@ function createDefaultState() {
   };
 }
 
+/** Nutzer mit echten App-Daten haben Onboarding faktisch abgeschlossen (Beta-Migration). */
+function appStateImpliesOnboardingComplete(state) {
+  if (!state || typeof state !== 'object') return false;
+  const ob = state.onboarding;
+  if (ob && typeof ob === 'object') {
+    if (ob.done === true || ob.done === 'true' || ob.done === 1) return true;
+    if (ob.v2 != null && typeof ob.v2 === 'object') return true;
+  }
+  if (Array.isArray(state.debts) && state.debts.length > 0) return true;
+  if (Array.isArray(state.transactions) && state.transactions.length > 0) return true;
+  const ng = state.notgroschen;
+  if (ng && typeof ng === 'object') {
+    const b = ng.balance;
+    const t = ng.target;
+    if ((typeof b === 'number' && b > 0) || (typeof t === 'number' && t > 0)) return true;
+  }
+  const ps = state.portfolioShares;
+  if (ps && typeof ps === 'object' && Object.keys(ps).length > 0) return true;
+  if (typeof state.portfolio === 'number' && state.portfolio > 0) return true;
+  return false;
+}
+
+function ensureOnboardingDoneInState(state) {
+  if (!appStateImpliesOnboardingComplete(state)) return state;
+  const ob = state.onboarding && typeof state.onboarding === 'object' ? state.onboarding : {};
+  if (ob.done === true) return state;
+  return { ...state, onboarding: { ...ob, done: true } };
+}
+
 function upsertOauthUser({ provider, providerId, email, name }) {
   const users = loadUsers();
   const pid = String(providerId || '');
@@ -409,9 +438,17 @@ app.get('/api/user/state', (req, res) => {
   const payload = getAuthPayload(req);
   if (!payload) return res.status(401).json({ error: 'Unauthorized' });
   const users = loadUsers();
-  const user = users.find((u) => u.id === payload.userId);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  return res.json({ state: user.state || {} });
+  const index = users.findIndex((u) => u.id === payload.userId);
+  if (index < 0) return res.status(401).json({ error: 'Unauthorized' });
+  const user = users[index];
+  let state = user.state || {};
+  const patched = ensureOnboardingDoneInState(state);
+  if (patched !== state) {
+    users[index] = { ...user, state: patched, updatedAt: new Date().toISOString() };
+    saveUsers(users);
+    state = patched;
+  }
+  return res.json({ state });
 });
 
 app.put('/api/user/state', (req, res) => {
@@ -427,9 +464,15 @@ app.put('/api/user/state', (req, res) => {
   let nextState = { ...prevState, ...incoming };
   if (incOb && typeof incOb === 'object') {
     const mergedOb = { ...prevOb, ...incOb };
+    const hadV2 = prevOb.v2 != null && typeof prevOb.v2 === 'object';
+    const wasComplete =
+      prevOb.done === true ||
+      hadV2 ||
+      appStateImpliesOnboardingComplete(prevState);
     // Race nach Login: done nicht versehentlich auf false — außer explizit „Onboarding erneut“
-    if (prevOb.done === true && incOb.done === false && incOb.reset !== true) {
+    if (wasComplete && incOb.done === false && incOb.reset !== true) {
       mergedOb.done = true;
+      if (hadV2 && (incOb.v2 == null || incOb.v2 === undefined)) mergedOb.v2 = prevOb.v2;
     }
     if (incOb.reset === true) delete mergedOb.reset;
     nextState = { ...nextState, onboarding: mergedOb };
