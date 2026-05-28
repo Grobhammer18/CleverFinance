@@ -32,7 +32,7 @@ Dann im Terminal (URL von GitHub ersetzen):
 ```bash
 cd /Users/alwinruf/Downloads/All-Win-main
 git branch -M main
-git remote add origin https://github.com/DEIN-USERNAME/clever-finance.git
+git remote add origin https://github.com/Grobhammer18/CleverFinance.git
 git push -u origin main
 ```
 
