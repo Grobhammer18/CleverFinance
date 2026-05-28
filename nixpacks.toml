@@ -1,0 +1,12 @@
+# Fallback, falls Railway nicht Dockerfile nutzt: kein Vite-Preview, nur API
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = []
+
+[start]
+cmd = "node server/billingServer.js"
