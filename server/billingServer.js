@@ -202,9 +202,19 @@ function isCapacitorOrigin(origin) {
   );
 }
 
+function isVercelAppOrigin(origin) {
+  try {
+    const { hostname, protocol } = new URL(origin);
+    if (protocol !== 'https:') return false;
+    return hostname === 'clever-finance.vercel.app' || /^clever-finance[a-z0-9-]*\.vercel\.app$/i.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedBrowserOrigin(origin) {
   if (!origin) return false;
-  if (allowedOrigins.includes(origin) || isCapacitorOrigin(origin)) return true;
+  if (allowedOrigins.includes(origin) || isCapacitorOrigin(origin) || isVercelAppOrigin(origin)) return true;
   if (appUrl) {
     try {
       if (new URL(origin).origin === new URL(appUrl).origin) return true;
