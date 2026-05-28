@@ -1589,7 +1589,11 @@ export default function AllWin() {
         const res = await fetch(`${BILLING_API}/api/user/state`, {
           headers: { Authorization: `Bearer ${authToken}` },
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          showToast('Cloud-Daten konnten nicht geladen werden. Bitte neu anmelden.', 'error');
+          setCloudUserStateReady(true);
+          return;
+        }
         const data = await res.json();
         const state = data?.state || {};
         if (Array.isArray(state.debts)) {
@@ -1922,6 +1926,22 @@ export default function AllWin() {
     }
     setOnboardingDone(true);
     setTab('dashboard');
+    if (authToken) {
+      void fetch(`${BILLING_API}/api/user/state`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          state: {
+            onboarding: { done: true, v2: p },
+          },
+        }),
+      }).catch(() => {
+        /* debounced sync retries */
+      });
+    }
     if (typeof window !== 'undefined' && !localStorage.getItem(APP_TOUR_STORAGE_KEY)) {
       setAppTourOpen(true);
     } else {
@@ -2446,9 +2466,8 @@ export default function AllWin() {
     setAuthForm({ name: '', email: '', password: '' });
     setAuthError('');
     setAuthGate('welcome');
-    setOnboardingDone(false);
-    setOnboardingV2(null);
     setCloudUserStateReady(false);
+    setHydrating(false);
   };
 
   const saveProfileName = async () => {
@@ -5069,7 +5088,7 @@ export default function AllWin() {
     );
   }
 
-  if (authUser && isHydrating) {
+  if (authUser && !cloudUserStateReady) {
     return (
       <div style={{ ...S.app, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={S.card}>Synchronisiere deine Daten… ⏳</div>
@@ -5077,7 +5096,7 @@ export default function AllWin() {
     );
   }
 
-  if (authUser && !onboardingDone) {
+  if (authUser && cloudUserStateReady && !onboardingDone) {
     return (
       <div key={wizardRemount}>
         {toast && <div style={S.toast(toast.type)}>{toast.msg}</div>}
