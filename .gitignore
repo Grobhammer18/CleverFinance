@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Lokale Nutzerdaten (Auth-Server) — nie ins Repo
+server/data/users.json
+
+# Export-Archive
+*.zip

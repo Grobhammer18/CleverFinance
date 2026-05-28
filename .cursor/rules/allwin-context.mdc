@@ -1,0 +1,24 @@
+---
+description: Clever Finance Produktkontext — Vision vs. Repo, wo Code lebt
+alwaysApply: true
+---
+
+# Clever Finance — Cursor-Kontext
+
+Vor größeren Änderungen **`docs/ALLWIN_CURSOR_PROMPT.md`** lesen (Zielspec + **IST-ZUSTAND**).
+
+## Repo-Kern
+
+- Haupt-UI: **`src/components/AllWin.tsx`** (Tabs, State, Sync) — kein separates `screens/`-Layout wie in der Vision.
+- Optional Backend: **`server/billingServer.js`** — Auth, Stripe, **`GET/PUT /api/user/state`** → `server/data/users.json`.
+- Vite proxy: **`/api`** → `http://localhost:4242` (wenn Billing läuft).
+- **Keine** KI/Gemini im aktuellen Stand; Markt-Kurse sind **simuliert**.
+
+## Daten
+
+- **Money → Home/Jahr:** nur `transactions` (Datum **ISO `YYYY-MM-DD`**, ältere Einträge `TT.MM.JJJJ` möglich).
+
+## Konventionen
+
+- UI-Texte **Deutsch**, Dark-Tokens wie in der App (`#0d1117`, `#00d4aa`).
+- Änderungen **fokussiert**; Patterns in `AllWin.tsx` / `billingServer.js` beibehalten, es sei denn, Refactor ist explizit gewünscht.
