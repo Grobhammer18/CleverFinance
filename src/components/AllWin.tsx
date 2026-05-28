@@ -119,6 +119,11 @@ function resolveOnboardingDoneFromCloud(
   return readLocalOnboardingDone(userId, email);
 }
 
+function isMoneyCompactViewport() {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(max-width: 640px)').matches;
+}
+
 function resolveBillingApiBase(): string {
   const raw = String(import.meta.env.VITE_BILLING_API_URL || '')
     .trim()
@@ -1341,8 +1346,9 @@ export default function AllWin() {
   const [portfolioMilestoneKind, setPortfolioMilestoneKind] = useState<PortfolioPowerMilestone>(8000);
   const prevPortfolioPowerForMilestoneRef = useRef<number | null>(null);
   const [moneyTxListExpanded, setMoneyTxListExpanded] = useState(true);
-  const [moneyFixedCostsOpen, setMoneyFixedCostsOpen] = useState(true);
-  const [moneyVarCostsOpen, setMoneyVarCostsOpen] = useState(true);
+  const [moneyFormOpen, setMoneyFormOpen] = useState(() => !isMoneyCompactViewport());
+  const [moneyFixedCostsOpen, setMoneyFixedCostsOpen] = useState(() => !isMoneyCompactViewport());
+  const [moneyVarCostsOpen, setMoneyVarCostsOpen] = useState(() => !isMoneyCompactViewport());
   const vermogenSnapRef = useRef({ notgroschenBalance: 0, portfolioTotalPower: 0, totalDebt: 0 });
   const [dailyVermogenSnapshots, setDailyVermogenSnapshots] = useState<DailyVermogenSnapshot[]>(() => readGuestDailyVermogenSnapshots());
 
@@ -2778,7 +2784,7 @@ export default function AllWin() {
       maxWidth: 430,
       margin: '0 auto',
       position: 'relative' as const,
-      paddingBottom: 100,
+      paddingBottom: 'calc(152px + env(safe-area-inset-bottom, 0px))',
     },
     header: { padding: '24px 20px 12px', background: awBg.header },
     logo: { fontSize: 26, fontWeight: 900, letterSpacing: -1, color: '#fff' },
@@ -3616,8 +3622,64 @@ export default function AllWin() {
     );
   };
 
+  const renderMoneyRecentTxList = () =>
+    transactions.length > 0 ? (
+      <div style={S.card}>
+        <button
+          type="button"
+          aria-expanded={moneyTxListExpanded}
+          onClick={() => setMoneyTxListExpanded((e) => !e)}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            marginBottom: moneyTxListExpanded ? 8 : 0,
+            cursor: 'pointer',
+            textAlign: 'left',
+          }}
+        >
+          <div style={S.label}>📜 Letzte Buchungen</div>
+          <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700, flexShrink: 0 }}>
+            {transactions.length} {moneyTxListExpanded ? '▼' : '▶'}
+          </span>
+        </button>
+        {!moneyTxListExpanded && (
+          <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2 }}>
+            Zugeklappt — antippen zum Anzeigen.
+          </div>
+        )}
+        {moneyTxListExpanded &&
+          transactions.slice(0, 15).map((tx) => (
+            <div key={tx.id} style={S.txRow}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{tx.category}</div>
+                <div style={{ fontSize: 11, color: '#7d8590' }}>
+                  {(() => {
+                    const boost = tx.linkedDebtName ? `Boost: ${tx.linkedDebtName}` : '';
+                    const ng = tx.fillsNotgroschen ? 'Home: Notgroschen +' : tx.debitsNotgroschen ? 'Home: Notgroschen −' : '';
+                    const cd = tx.debitsCashDepot ? 'LevelUp: Cash −' : tx.creditsCashDepot ? 'LevelUp: Cash +' : '';
+                    const bits = [boost, ng, cd, tx.paymentMethod, tx.note].filter(Boolean);
+                    const sub = bits.join(' · ');
+                    return sub ? `${sub} · ${formatTxDateLabel(tx.date)}` : formatTxDateLabel(tx.date);
+                  })()}
+                </div>
+              </div>
+              <div style={{ fontWeight: 700, color: tx.type === 'einnahme' ? '#2563eb' : '#ff7b7b' }}>
+                {tx.type === 'einnahme' ? '+' : '-'}
+                {fmt(+tx.amount)}
+              </div>
+            </div>
+          ))}
+      </div>
+    ) : null;
+
   const renderTransactions = () => (
-    <div style={S.section}>
+    <div style={{ ...S.section, scrollMarginBottom: 160 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginBottom: 10, minHeight: 36 }}>
         <div ref={moneyOverflowRef} style={{ position: 'relative', zIndex: 5 }}>
           <button
@@ -3691,8 +3753,34 @@ export default function AllWin() {
           )}
         </div>
       </div>
+      {renderMoneyRecentTxList()}
       <div data-tour="money-form" style={S.card}>
-        <div style={S.label}>✨ Neue Buchung</div>
+        <button
+          type="button"
+          aria-expanded={moneyFormOpen}
+          onClick={() => setMoneyFormOpen((o) => !o)}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            marginBottom: moneyFormOpen ? 10 : 0,
+            cursor: 'pointer',
+            textAlign: 'left',
+          }}
+        >
+          <div style={S.label}>✨ Neue Buchung</div>
+          <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700, flexShrink: 0 }}>{moneyFormOpen ? '▼' : '▶'}</span>
+        </button>
+        {!moneyFormOpen && (
+          <div style={{ fontSize: 11, color: '#8b949e', marginTop: 2 }}>Antippen, um eine Buchung einzutragen.</div>
+        )}
+        {moneyFormOpen && (
+        <>
         <div style={{ fontSize: 11, color: '#7d8590', marginTop: 4, marginBottom: 10 }}>
           Zählt für Home und Jahresübersicht (Kalendermonat). „Kreditrate“ + Schuld: Tilgung in Boost. Kategorie „Notgroschen“: Polster aufstocken. Zahlungsart „Notgroschen“: aus dem Polster zahlen. Zahlungsart „Cash Depot“: Broker-Cash abbuchen; „Einzahlung Cash Depot“: Broker-Cash aufstocken (Haushalt zählt weiter als Ausgabe). Abos/Miete/Kreditrate: Liste „Laufende Fixkosten“; Essen, Fahrt, Kleidung u. a.: „Variable Kosten“ (jeweils letzter Betrag je Position).
           {!debts.some((d) => d.remaining > 0) && (
@@ -3816,6 +3904,8 @@ export default function AllWin() {
             ✅ Speichern
           </button>
         </div>
+        </>
+        )}
       </div>
 
       <div style={{ ...S.card, border: `1px solid ${awBg.line}`, background: awBg.hole }}>
@@ -3969,62 +4059,6 @@ export default function AllWin() {
           </>
         )}
       </div>
-
-      {transactions.length > 0 && (
-        <div style={S.card}>
-          <button
-            type="button"
-            aria-expanded={moneyTxListExpanded}
-            onClick={() => setMoneyTxListExpanded((e) => !e)}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              marginBottom: moneyTxListExpanded ? 8 : 0,
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            <div style={S.label}>📜 Letzte Buchungen</div>
-            <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700, flexShrink: 0 }}>
-              {transactions.length} {moneyTxListExpanded ? '▼' : '▶'}
-            </span>
-          </button>
-          {!moneyTxListExpanded && (
-            <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2 }}>
-              Zugeklappt — antippen zum Anzeigen. Nach einem Monatswechsel startet die Liste so.
-            </div>
-          )}
-          {moneyTxListExpanded &&
-            transactions.slice(0, 15).map((tx) => (
-              <div key={tx.id} style={S.txRow}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{tx.category}</div>
-                  <div style={{ fontSize: 11, color: '#7d8590' }}>
-                    {(() => {
-                      const boost = tx.linkedDebtName ? `Boost: ${tx.linkedDebtName}` : '';
-                      const ng = tx.fillsNotgroschen ? 'Home: Notgroschen +' : tx.debitsNotgroschen ? 'Home: Notgroschen −' : '';
-                      const cd =
-                        tx.debitsCashDepot ? 'LevelUp: Cash −' : tx.creditsCashDepot ? 'LevelUp: Cash +' : '';
-                      const bits = [boost, ng, cd, tx.paymentMethod, tx.note].filter(Boolean);
-                      const sub = bits.join(' · ');
-                      return sub ? `${sub} · ${formatTxDateLabel(tx.date)}` : formatTxDateLabel(tx.date);
-                    })()}
-                  </div>
-                </div>
-                <div style={{ fontWeight: 700, color: tx.type === 'einnahme' ? '#2563eb' : '#ff7b7b' }}>
-                  {tx.type === 'einnahme' ? '+' : '-'}
-                  {fmt(+tx.amount)}
-                </div>
-              </div>
-            ))}
-        </div>
-      )}
     </div>
   );
 
