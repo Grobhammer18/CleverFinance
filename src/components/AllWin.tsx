@@ -1243,6 +1243,8 @@ export default function AllWin() {
   const [isHydrating, setHydrating] = useState(false);
   /** Erst nach erfolgreichem GET /api/user/state — blockiert PUT, bis Cloud-Daten geladen sind (kein Überschreiben von onboarding). */
   const [cloudUserStateReady, setCloudUserStateReady] = useState(false);
+  /** Verhindert PUT mit onboarding.done=false bevor GET die Cloud-Daten angewendet hat. */
+  const cloudOnboardingHydratedRef = useRef(false);
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
   const [authGate, setAuthGate] = useState<'welcome' | 'auth'>('welcome');
   const [onboardingDone, setOnboardingDone] = useState(false);
@@ -1311,10 +1313,12 @@ export default function AllWin() {
     if (!authUser || !authToken) {
       setHydrating(false);
       setCloudUserStateReady(false);
+      cloudOnboardingHydratedRef.current = false;
       return;
     }
     setHydrating(true);
     setCloudUserStateReady(false);
+    cloudOnboardingHydratedRef.current = false;
   }, [authUser?.id, authToken]);
 
   const chartTimelineEndMs = useMemo(
@@ -1616,8 +1620,12 @@ export default function AllWin() {
           setOnboardingV2(null);
         }
         const obDone = ob?.done === true || ob?.done === 'true' || ob?.done === 1;
-        if (obDone) {
+        const localDoneKey = authUser?.id ? `allwin.onboardingDone.${authUser.id}` : '';
+        const localDone = localDoneKey && localStorage.getItem(localDoneKey) === '1';
+        const done = obDone || localDone;
+        if (done) {
           setOnboardingDone(true);
+          if (localDoneKey) localStorage.setItem(localDoneKey, '1');
         } else {
           setOnboardingDone(false);
         }
@@ -1678,6 +1686,7 @@ export default function AllWin() {
           setProfileGender('');
           setEarnedOrdenPresetIds([]);
         }
+        cloudOnboardingHydratedRef.current = true;
         setCloudUserStateReady(true);
       } finally {
         setHydrating(false);
@@ -1689,22 +1698,11 @@ export default function AllWin() {
   useEffect(() => {
     if (!authUser || !authToken || isHydrating || !cloudUserStateReady) return;
     const id = setTimeout(() => {
-      void fetch(`${BILLING_API}/api/user/state`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authToken}`,
-        },
-        body: JSON.stringify({
-          state: {
+      const statePayload: Record<string, unknown> = {
             debts,
             transactions,
             subscription: sub,
             profile: { gender: profileGender, ordenEarnedPresetIds: earnedOrdenPresetIds },
-            onboarding: {
-              done: onboardingDone,
-              v2: onboardingV2,
-            },
             notgroschen: { balance: notgroschenBalance, target: notgroschenTarget },
             notifications: notifSettings,
             portfolio: +portfolioEuroValue(portfolioShares, tradableMarket).toFixed(2),
@@ -1715,8 +1713,17 @@ export default function AllWin() {
             watchlistExtras,
             portfolioExcludedBaseSyms,
             dailyVermogenSnapshots,
-          },
-        }),
+      };
+      if (cloudOnboardingHydratedRef.current) {
+        statePayload.onboarding = { done: onboardingDone, v2: onboardingV2 };
+      }
+      void fetch(`${BILLING_API}/api/user/state`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ state: statePayload }),
       });
     }, 500);
     return () => clearTimeout(id);
@@ -1925,6 +1932,13 @@ export default function AllWin() {
       if (sh) setPortfolioShares(normalizePortfolioShares(sh, tradableMarket));
     }
     setOnboardingDone(true);
+    if (authUser?.id) {
+      try {
+        localStorage.setItem(`allwin.onboardingDone.${authUser.id}`, '1');
+      } catch {
+        /* ignore */
+      }
+    }
     setTab('dashboard');
     if (authToken) {
       void fetch(`${BILLING_API}/api/user/state`, {
@@ -1969,6 +1983,23 @@ export default function AllWin() {
     setWizardRemount((n) => n + 1);
     setProfileSection('overview');
     setTab('dashboard');
+    if (authUser?.id) {
+      try {
+        localStorage.removeItem(`allwin.onboardingDone.${authUser.id}`);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (authToken) {
+      void fetch(`${BILLING_API}/api/user/state`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ state: { onboarding: { done: false, reset: true, v2: null } } }),
+      });
+    }
     showToast('Onboarding startet neu.', 'success');
   };
 
@@ -2468,6 +2499,7 @@ export default function AllWin() {
     setAuthGate('welcome');
     setCloudUserStateReady(false);
     setHydrating(false);
+    cloudOnboardingHydratedRef.current = false;
   };
 
   const saveProfileName = async () => {

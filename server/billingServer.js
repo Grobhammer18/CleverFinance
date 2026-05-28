@@ -420,12 +420,23 @@ app.put('/api/user/state', (req, res) => {
   const users = loadUsers();
   const index = users.findIndex((u) => u.id === payload.userId);
   if (index < 0) return res.status(401).json({ error: 'Unauthorized' });
+  const prevState = users[index].state || {};
+  const incoming = req.body?.state || {};
+  const prevOb = prevState.onboarding || {};
+  const incOb = incoming.onboarding;
+  let nextState = { ...prevState, ...incoming };
+  if (incOb && typeof incOb === 'object') {
+    const mergedOb = { ...prevOb, ...incOb };
+    // Race nach Login: done nicht versehentlich auf false — außer explizit „Onboarding erneut“
+    if (prevOb.done === true && incOb.done === false && incOb.reset !== true) {
+      mergedOb.done = true;
+    }
+    if (incOb.reset === true) delete mergedOb.reset;
+    nextState = { ...nextState, onboarding: mergedOb };
+  }
   users[index] = {
     ...users[index],
-    state: {
-      ...(users[index].state || {}),
-      ...(req.body?.state || {}),
-    },
+    state: nextState,
     updatedAt: new Date().toISOString(),
   };
   saveUsers(users);
