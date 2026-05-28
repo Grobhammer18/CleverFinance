@@ -21,7 +21,7 @@ Bis zum Start soll die App unter einer **öffentlichen URL** erreichbar sein —
 - [x] Mindestens **5 Tester** in der Tabelle eingetragen (Erdi, Jamila, Moritz, Tobias Jakobs, Tobias Ruf — alle iPhone)
 - [x] Google Form erstellt, **Formular-URL** eingetragen
 - [x] Git lokal: `git init` + Initial Commit (siehe [GITHUB_SETUP.md](./GITHUB_SETUP.md))
-- [ ] GitHub-Repo: [Grobhammer18/CleverFinance](https://github.com/Grobhammer18/CleverFinance) + `git push` (siehe unten)
+- [x] GitHub-Repo: [Grobhammer18/CleverFinance](https://github.com/Grobhammer18/CleverFinance) + `git push` ✅
 - [ ] (App-URL kommt in Schritt 4/5 — Deploy)
 
 ---

@@ -1,0 +1,11 @@
+# Clever Finance — Railway = nur Billing-API (kein Vite-Frontend)
+# Frontend: Vercel mit VITE_BILLING_API_URL = diese Railway-URL
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node server/billingServer.js"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 120

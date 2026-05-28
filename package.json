@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "dev:billing": "node server/billingServer.js",
+    "start": "node server/billingServer.js",
     "build": "vite build",
     "ios:prep": "vite build && npx cap sync ios",
     "ios:open": "npx cap open ios",

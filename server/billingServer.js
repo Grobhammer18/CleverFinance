@@ -11,8 +11,8 @@ const envPath = fs.existsSync('.env.local') ? '.env.local' : '.env';
 dotenv.config({ path: envPath });
 
 const app = express();
-const port = Number(process.env.BILLING_PORT || 4242);
-const appUrl = process.env.APP_URL || 'http://localhost:3000';
+const port = Number(process.env.PORT || process.env.BILLING_PORT || 4242);
+const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
 const stripeSecret = process.env.STRIPE_SECRET_KEY || '';
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
@@ -180,13 +180,18 @@ function inferCycleFromSession(session) {
   return 'monthly';
 }
 
-const allowedOrigins = (
-  process.env.CORS_ORIGIN ||
-  'http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,http://127.0.0.1:3003,http://127.0.0.1:5173,http://192.168.178.84:3000,http://192.168.178.84:3001,http://192.168.178.84:3002,http://192.168.178.84:3003'
-)
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+const defaultLocalOrigins =
+  'http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:3003,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:3001,http://127.0.0.1:3002,http://127.0.0.1:3003,http://127.0.0.1:5173';
+const allowedOrigins = [
+  ...(
+    process.env.CORS_ORIGIN ||
+    defaultLocalOrigins
+  )
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+  appUrl,
+].filter((v, i, a) => a.indexOf(v) === i);
 
 function isCapacitorOrigin(origin) {
   if (!origin) return false;
@@ -197,16 +202,26 @@ function isCapacitorOrigin(origin) {
   );
 }
 
+function isAllowedBrowserOrigin(origin) {
+  if (!origin) return false;
+  if (allowedOrigins.includes(origin) || isCapacitorOrigin(origin)) return true;
+  if (appUrl) {
+    try {
+      if (new URL(origin).origin === new URL(appUrl).origin) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  return (
+    /^http:\/\/192\.168\.\d+\.\d+:300\d$/.test(origin) ||
+    /^http:\/\/localhost:(300\d|5173)$/.test(origin) ||
+    /^http:\/\/127\.0\.0\.1:(300\d|5173)$/.test(origin)
+  );
+}
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (
-    origin &&
-    (allowedOrigins.includes(origin) ||
-      isCapacitorOrigin(origin) ||
-      /^http:\/\/192\.168\.\d+\.\d+:300\d$/.test(origin) ||
-      /^http:\/\/localhost:(300\d|5173)$/.test(origin) ||
-      /^http:\/\/127\.0\.0\.1:(300\d|5173)$/.test(origin))
-  ) {
+  if (origin && isAllowedBrowserOrigin(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
   }
   res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -450,6 +465,10 @@ app.get('/api/billing/checkout-session/:sessionId', async (req, res) => {
     console.error('[billing] checkout-session lookup failed:', err.message);
     return res.status(500).json({ error: 'Failed to fetch checkout session.' });
   }
+});
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, service: 'clever-finance-billing' });
 });
 
 app.listen(port, () => {

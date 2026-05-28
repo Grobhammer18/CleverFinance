@@ -2319,6 +2319,14 @@ export default function AllWin() {
 
   const submitAuth = async () => {
     setAuthError('');
+    if (!BILLING_API) {
+      setAuthError(
+        import.meta.env.DEV
+          ? 'Billing-Server nicht erreichbar. Zweites Terminal: npm run dev:billing — oder VITE_BILLING_API_URL in .env.local setzen.'
+          : 'Backend-URL fehlt. Auf Vercel Environment Variable VITE_BILLING_API_URL = deine Railway-URL setzen und neu deployen.',
+      );
+      return;
+    }
     try {
       const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const payload =
@@ -2339,7 +2347,9 @@ export default function AllWin() {
       setAuthUser(data.user);
       showToast(`Willkommen, ${data.user?.name || 'User'}!`);
     } catch {
-      setAuthError('Server nicht erreichbar.');
+      setAuthError(
+        `Server nicht erreichbar (${BILLING_API}). Railway-URL im Browser testen: ${BILLING_API}/api/auth/me — Service aktiv? VITE_BILLING_API_URL auf Vercel = https://…`,
+      );
     }
   };
 
