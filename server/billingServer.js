@@ -17,10 +17,10 @@ const stripeSecret = process.env.STRIPE_SECRET_KEY || '';
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
 if (!stripeSecret) {
-  console.warn('[billing] Missing STRIPE_SECRET_KEY. Billing endpoints will fail until it is set.');
+  console.warn('[billing] Missing STRIPE_SECRET_KEY. Stripe checkout disabled (ok for beta).');
 }
 
-const stripe = new Stripe(stripeSecret);
+const stripe = stripeSecret ? new Stripe(stripeSecret) : null;
 const authSecret = process.env.AUTH_SECRET || 'dev-auth-secret-change-me';
 const googleClient = new OAuth2Client();
 const appleAudience = process.env.APPLE_CLIENT_ID || process.env.VITE_APPLE_CLIENT_ID || '';
@@ -231,8 +231,17 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, service: 'clever-finance-billing' });
+});
+
+app.get('/', (_req, res) => {
+  res.json({ ok: true, service: 'clever-finance-billing', health: '/api/health' });
+});
+
 app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), (req, res) => {
   try {
+    if (!stripe) return res.status(503).send('Stripe not configured');
     if (!webhookSecret) return res.status(400).send('Missing STRIPE_WEBHOOK_SECRET');
     const signature = req.headers['stripe-signature'];
     const event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
@@ -415,6 +424,7 @@ app.put('/api/user/state', (req, res) => {
 
 app.post('/api/billing/create-checkout-session', async (req, res) => {
   try {
+    if (!stripe) return res.status(503).json({ error: 'Stripe not configured (beta: no payment).' });
     const { tier, cycle } = req.body || {};
     if (!['pro', 'elite'].includes(tier)) {
       return res.status(400).json({ error: 'Only pro/elite are purchasable via Stripe.' });
@@ -449,6 +459,7 @@ app.post('/api/billing/create-checkout-session', async (req, res) => {
 
 app.get('/api/billing/checkout-session/:sessionId', async (req, res) => {
   try {
+    if (!stripe) return res.status(503).json({ error: 'Stripe not configured.' });
     const session = await stripe.checkout.sessions.retrieve(req.params.sessionId, {
       expand: ['line_items'],
     });
@@ -467,10 +478,6 @@ app.get('/api/billing/checkout-session/:sessionId', async (req, res) => {
   }
 });
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'clever-finance-billing' });
-});
-
-app.listen(port, () => {
-  console.log(`[billing] listening on http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`[billing] listening on http://0.0.0.0:${port}`);
 });
