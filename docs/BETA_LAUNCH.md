@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Öffentlicher Test-Start** | **Montag, 16. Juni 2026** |
-| **Feedback-Frist (Tester)** | **Sonntag, 29. Juni 2026** |
+| **Feedback-Frist (Tester)** | **Montag, 15. Juni 2026** |
 | **Internes Review** | **Dienstag, 1. Juli 2026** |
 
 Bis zum Start soll die App unter einer **öffentlichen URL** erreichbar sein — **ohne Bezahlung**, alle Funktionen freigeschaltet.
@@ -22,7 +22,9 @@ Bis zum Start soll die App unter einer **öffentlichen URL** erreichbar sein —
 - [x] Google Form erstellt, **Formular-URL** eingetragen
 - [x] Git lokal: `git init` + Initial Commit (siehe [GITHUB_SETUP.md](./GITHUB_SETUP.md))
 - [x] GitHub-Repo: [Grobhammer18/CleverFinance](https://github.com/Grobhammer18/CleverFinance) + `git push` ✅
-- [ ] (App-URL kommt in Schritt 4/5 — Deploy)
+- [x] Deploy live: Vercel + Railway (siehe URLs unten)
+- [x] Smoke-Test iPhone (28.05.2026)
+- [ ] Tester eingeladen ([BETA_TESTERS.md](./BETA_TESTERS.md))
 
 ---
 
@@ -35,18 +37,59 @@ Bis zum Start soll die App unter einer **öffentlichen URL** erreichbar sein —
 
 ---
 
-## URLs (eintragen, sobald deployt)
+## URLs (live)
 
-| Dienst | URL (Platzhalter) | Anmerkung |
-|--------|-------------------|-----------|
-| **App (Frontend)** | `https://________________.vercel.app` | Vite-Build, `VITE_BILLING_API_URL` zeigt auf Backend |
-| **API (Billing + Auth)** | `https://________________.railway.app` | `server/billingServer.js`, Port aus Hosting |
-| **Feedback-Formular** | [Feedback CleverFinance](https://docs.google.com/forms/d/e/1FAIpQLSc0I-GQeqb7ND_EkofGvIYcUO44ZyMvllKOOYOLv6OakE3gwA/viewform) | ✅ angelegt |
+| Dienst | URL | Anmerkung |
+|--------|-----|-----------|
+| **App (Frontend)** | https://clever-finance.vercel.app | an Tester senden |
+| **API (Billing + Auth)** | https://cleverfinance-production.up.railway.app | `APP_URL` = Vercel-URL, `AUTH_SECRET`, `PORT=8080` |
+| **Feedback-Formular** | [Feedback CleverFinance](https://docs.google.com/forms/d/e/1FAIpQLSc0I-GQeqb7ND_EkofGvIYcUO44ZyMvllKOOYOLv6OakE3gwA/viewform) | ✅ |
 
-**Tester-Link (Copy-Paste):**
+**Einladungstext:** [BETA_TESTERS.md](./BETA_TESTERS.md)
 
-> Clever Finance — kostenlose Testphase: [APP-URL]  
-> Bitte Konto anlegen, Onboarding + Tour durchklicken, 2–3 Buchungen in Money. Marktkurse sind Demo. Feedback bis 29.6.: [FORMULAR-URL]
+---
+
+## Terminal (lokal & Deploy)
+
+Projektordner:
+
+```bash
+cd /Users/alwinruf/Downloads/All-Win-main
+```
+
+**Nach GitHub-Änderungen (z. B. von Cursor) — lokal aktualisieren:**
+
+```bash
+git pull origin main
+```
+
+**Lokal testen (zwei Terminals):**
+
+```bash
+# Terminal 1 — API (Auth + Cloud-Sync)
+npm run dev:billing
+
+# Terminal 2 — App
+npm run dev
+```
+
+→ [http://localhost:3000](http://localhost:3000) · Billing: [http://localhost:4242/api/health](http://localhost:4242/api/health)
+
+**Änderungen live (Vercel + Railway deployen automatisch):**
+
+```bash
+git add src/components/AllWin.tsx server/billingServer.js
+git commit -m "kurze Beschreibung"
+git push origin main
+```
+
+**API / Cloud-Sync prüfen (Production):**
+
+```bash
+curl -s https://cleverfinance-production.up.railway.app/api/health
+```
+
+Stand **28.05.2026:** Cloud-Speichern (`PUT /api/user/state`) braucht CORS-Methode `PUT` auf Railway — Commit `a1a9edd`. Nach Deploy: iPhone App öffnen → kurz warten → App schließen → am PC unter [clever-finance.vercel.app](https://clever-finance.vercel.app) mit **E-Mail + Passwort** anmelden.
 
 ---
 
@@ -74,30 +117,22 @@ VITE_DEV_FORCE_ELITE=1
 
 ## Deploy-Checkliste (bis **13. Juni 2026**)
 
-### Frontend (z. B. Vercel)
+### Frontend (Vercel) — erledigt
 
-- [ ] Repo mit GitHub verbinden
-- [ ] Build: `npm run build`, Output: `dist`
-- [ ] Env: `VITE_BILLING_API_URL=https://<API-HOST>` (ohne trailing slash)
-- [ ] Env: `VITE_PUBLIC_BETA=1`
-- [ ] Optional: `VITE_GOOGLE_CLIENT_ID` (falls Google-Login gewünscht)
-- [ ] Test: Registrierung, Onboarding, Tour, eine Buchung
+- [x] Repo GitHub, Build `dist`, Env `VITE_PUBLIC_BETA=1`, `VITE_BILLING_API_URL` → Railway
+- [x] Registrierung + Onboarding + iPhone-Test
 
-### Backend (z. B. Railway / Render / Fly.io)
+### Backend (Railway) — erledigt
 
-- [ ] Start: `node server/billingServer.js` (siehe `package.json` → `dev:billing`)
-- [ ] Env: `AUTH_SECRET=<starkes-geheimnis>`
-- [ ] Env: `APP_URL=https://<FRONTEND-URL>` (für Redirects)
-- [ ] Env: `BILLING_PORT` = vom Host gesetzter Port (oft `PORT`)
-- [ ] Persistenz: Volume oder DB für `server/data/users.json` (sonst gehen Nutzer bei Redeploy verloren)
-- [ ] CORS: Frontend-Origin erlauben (falls nötig in `billingServer.js` prüfen)
-- [ ] **Keine** Stripe-Price-IDs nötig in der Beta
+- [x] Dockerfile, `node server/billingServer.js`, `PORT=8080`, CORS + `APP_URL`
+- [ ] **Volume** `/app/server/data` (noch prüfen — sonst Accounts bei Redeploy weg)
+- [x] Kein Stripe nötig in der Beta
 
-### Vor dem 16.6.
+### Vor / am 16.6.
 
-- [ ] Selbst 1× kompletten Flow auf der **öffentlichen URL** (Handy + Desktop)
-- [ ] Impressum/Disclaimer: mindestens Platzhalter mit echtem Namen/Kontakt für externe Tester
-- [ ] Tester-Liste + Einladungstext verschickt
+- [x] Flow auf **öffentlicher URL** (Handy)
+- [ ] Impressum mit echtem Kontakt
+- [ ] **5 Tester eingeladen** → [BETA_TESTERS.md](./BETA_TESTERS.md)
 
 ---
 
@@ -106,7 +141,7 @@ VITE_DEV_FORCE_ELITE=1
 | Kriterium | Go |
 |-----------|-----|
 | App-URL lädt auf dem Handy | ✅ |
-| Registrieren + Login + Sync | ✅ |
+| Registrieren + Login + Sync (E-Mail/Passwort, iPhone ↔ PC) | ✅ (CORS PUT ab `a1a9edd`) |
 | Onboarding + App-Tour | ✅ |
 | Money → Home Saldo stimmt | ✅ |
 | LevelUp ohne Paywall | ✅ |
