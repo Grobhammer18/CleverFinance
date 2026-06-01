@@ -2112,9 +2112,15 @@ export default function AllWin() {
           Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({ state: statePayload }),
-      }).catch(() => {
-        /* Cloud-Sync fehlgeschlagen — lokaler Cache bleibt die Quelle */
-      });
+      })
+        .then((res) => {
+          if (!res.ok && import.meta.env.DEV) {
+            console.warn('[cloud] PUT /api/user/state', res.status);
+          }
+        })
+        .catch(() => {
+          /* Cloud-Sync fehlgeschlagen — lokaler Cache bleibt die Quelle */
+        });
     },
     [
       BILLING_API,
@@ -2969,10 +2975,12 @@ export default function AllWin() {
     }
     try {
       const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const email = authForm.email.trim();
+      const password = authForm.password;
       const payload =
         authMode === 'login'
-          ? { email: authForm.email, password: authForm.password }
-          : { name: authForm.name, email: authForm.email, password: authForm.password };
+          ? { email, password }
+          : { name: authForm.name.trim() || email.split('@')[0] || 'User', email, password };
       const res = await fetch(`${BILLING_API}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
