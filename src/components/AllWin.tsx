@@ -165,21 +165,28 @@ type Transaction = {
 type MonthBucket = { einnahmen: number; ausgaben: number };
 
 /** ISO `YYYY-MM-DD` oder deutsch `DD.MM.YYYY` (wie früher gespeichert). */
-function parseTxYearMonth(dateStr: string): { year: number; month0: number } | null {
+function parseTxDateParts(dateStr: string): { year: number; month0: number; day: number } | null {
   const s = String(dateStr || '').trim();
   if (!s) return null;
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
-    const d = new Date(`${s.slice(0, 10)}T12:00:00`);
-    if (Number.isNaN(d.getTime())) return null;
-    return { year: d.getFullYear(), month0: d.getMonth() };
+    const year = +s.slice(0, 4);
+    const month = +s.slice(5, 7);
+    const day = +s.slice(8, 10);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) return { year, month0: month - 1, day };
   }
   const de = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
   if (de) {
+    const day = +de[1];
     const month = +de[2];
     const year = +de[3];
-    if (month >= 1 && month <= 12) return { year, month0: month - 1 };
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) return { year, month0: month - 1, day };
   }
   return null;
+}
+
+function parseTxYearMonth(dateStr: string): { year: number; month0: number } | null {
+  const p = parseTxDateParts(dateStr);
+  return p ? { year: p.year, month0: p.month0 } : null;
 }
 
 function aggregateByCalendarMonth(transactions: Transaction[], year: number): MonthBucket[] {
@@ -196,9 +203,9 @@ function aggregateByCalendarMonth(transactions: Transaction[], year: number): Mo
 }
 
 function formatTxDateLabel(dateStr: string): string {
-  const ym = parseTxYearMonth(dateStr);
-  if (ym) {
-    return new Date(ym.year, ym.month0, 15).toLocaleDateString('de-DE', {
+  const parts = parseTxDateParts(dateStr);
+  if (parts) {
+    return new Date(parts.year, parts.month0, parts.day).toLocaleDateString('de-DE', {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
@@ -303,7 +310,7 @@ type Debt = {
 };
 
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString('sv-SE');
 }
 
 type FormState = {
