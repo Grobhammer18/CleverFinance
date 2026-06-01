@@ -388,6 +388,67 @@ function mergeDebtsById(cloud: Debt[], cached: Debt[]): Debt[] {
   return [...byId.values()];
 }
 
+function txAmountNum(tx: Transaction): number {
+  return Math.round(parseFloat(String(tx.amount).replace(',', '.')) * 100) / 100;
+}
+
+function txDateToInputValue(dateStr: string): string {
+  const s = String(dateStr || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const de = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (de) {
+    const day = de[1].padStart(2, '0');
+    const month = de[2].padStart(2, '0');
+    return `${de[3]}-${month}-${day}`;
+  }
+  return todayIsoDate();
+}
+
+/** Storniert die Seiteneffekte einer Buchung (Gegenteil von addTx). */
+function reverseTxSideEffects(
+  tx: Transaction,
+  debts: Debt[],
+  notgroschenBalance: number,
+  portfolioBrokerCash: number,
+): { debts: Debt[]; notgroschenBalance: number; portfolioBrokerCash: number } {
+  const amt = txAmountNum(tx);
+  let nextDebts = debts;
+  let ng = notgroschenBalance;
+  let broker = portfolioBrokerCash;
+
+  if (tx.type === 'ausgabe' && tx.category === 'Kreditrate' && tx.linkedDebtId != null) {
+    nextDebts = debts.map((d) => {
+      if (d.id !== tx.linkedDebtId) return d;
+      const restored = Math.min(d.total, Math.round((d.remaining + amt) * 100) / 100);
+      if (restored > 0 && d.archivedAt) {
+        const { archivedAt: _arch, ...rest } = d;
+        return { ...rest, remaining: restored };
+      }
+      return { ...d, remaining: restored };
+    });
+  }
+  if (tx.type === 'ausgabe' && tx.category === 'Notgroschen' && tx.fillsNotgroschen) {
+    ng = Math.round((ng - amt) * 100) / 100;
+  }
+  if (tx.type === 'ausgabe' && tx.debitsNotgroschen) {
+    ng = Math.round((ng + amt) * 100) / 100;
+  }
+  if (tx.type === 'ausgabe' && tx.debitsCashDepot) {
+    broker = Math.round((broker + amt) * 100) / 100;
+  }
+  if (tx.type === 'ausgabe' && tx.creditsCashDepot) {
+    broker = Math.round((broker - amt) * 100) / 100;
+  }
+  if (tx.type === 'einnahme' && tx.category === 'Dividende') {
+    broker = Math.round((broker - amt) * 100) / 100;
+  }
+  return {
+    debts: nextDebts,
+    notgroschenBalance: Math.max(0, ng),
+    portfolioBrokerCash: Math.max(0, broker),
+  };
+}
+
 type ToastState = {
   msg: string;
   type: 'success' | 'error' | 'level';
@@ -1456,6 +1517,7 @@ export default function AllWin() {
   const [moneyFormOpen, setMoneyFormOpen] = useState(() => !isMoneyCompactViewport());
   const [moneyFixedCostsOpen, setMoneyFixedCostsOpen] = useState(() => !isMoneyCompactViewport());
   const [moneyVarCostsOpen, setMoneyVarCostsOpen] = useState(() => !isMoneyCompactViewport());
+  const [editingTxId, setEditingTxId] = useState<number | null>(null);
   const vermogenSnapRef = useRef({ notgroschenBalance: 0, portfolioTotalPower: 0, totalDebt: 0 });
   const [dailyVermogenSnapshots, setDailyVermogenSnapshots] = useState<DailyVermogenSnapshot[]>(() => readGuestDailyVermogenSnapshots());
 
@@ -2450,17 +2512,67 @@ export default function AllWin() {
     );
   };
 
+  const resetMoneyForm = () => {
+    setEditingTxId(null);
+    setForm({
+      type: 'ausgabe',
+      amount: '',
+      category: CATS.ausgaben[0],
+      note: '',
+      date: todayIsoDate(),
+      paymentMethod: '',
+      linkedDebtId: '',
+    });
+  };
+
+  const deleteTx = (id: number) => {
+    const tx = transactions.find((t) => t.id === id);
+    if (!tx) return;
+    if (!window.confirm('Diese Buchung wirklich löschen?')) return;
+    const rev = reverseTxSideEffects(tx, debts, notgroschenBalance, portfolioBrokerCash);
+    const nextTx = transactions.filter((t) => t.id !== id);
+    flushSync(() => {
+      setTx(nextTx);
+      setDebts(rev.debts);
+      setNotgroschenBalance(rev.notgroschenBalance);
+      setPortfolioBrokerCash(rev.portfolioBrokerCash);
+    });
+    persistUserState({
+      transactions: nextTx,
+      debts: rev.debts,
+      notgroschenBalance: rev.notgroschenBalance,
+      portfolioBrokerCash: rev.portfolioBrokerCash,
+    });
+    if (editingTxId === id) resetMoneyForm();
+    showToast('Buchung gelöscht.');
+  };
+
+  const startEditTx = (tx: Transaction) => {
+    setEditingTxId(tx.id);
+    setMoneyFormOpen(true);
+    setForm({
+      type: tx.type,
+      amount: String(tx.amount),
+      category: tx.category,
+      note: tx.note || '',
+      date: txDateToInputValue(tx.date),
+      paymentMethod: tx.paymentMethod || '',
+      linkedDebtId: tx.linkedDebtId != null ? String(tx.linkedDebtId) : '',
+    });
+    showToast('Buchung zum Bearbeiten geladen — unten anpassen und speichern.', 'success');
+  };
+
   const addTx = () => {
     if (!form.amount || Number.isNaN(+form.amount)) return;
     const rawAmt = parseFloat(String(form.amount).replace(/\s/g, '').replace(',', '.'));
     if (Number.isNaN(rawAmt) || rawAmt <= 0) return;
     const amt = Math.round(rawAmt * 100) / 100;
 
-    const activeForLink = debts.filter((d) => d.remaining > 0);
-    if (form.type === 'ausgabe' && form.category === 'Kreditrate' && activeForLink.length > 0 && !form.linkedDebtId) {
-      showToast('Bitte eine Schuld unter Boost auswählen (oder Kategorie ändern).', 'error');
-      return;
-    }
+    const oldTx = editingTxId != null ? transactions.find((t) => t.id === editingTxId) : undefined;
+    let workDebts = debts;
+    let workNg = notgroschenBalance;
+    let workBroker = portfolioBrokerCash;
+
     if (form.type === 'ausgabe' && form.category === 'Notgroschen' && form.paymentMethod === 'Notgroschen') {
       showToast(
         'Kategorie „Notgroschen“ = Einzahlung aufs Polster. Zahlung aus dem Polster: andere Kategorie wählen und Zahlungsart „Notgroschen“.',
@@ -2468,12 +2580,25 @@ export default function AllWin() {
       );
       return;
     }
-    if (form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen' && amt > notgroschenBalance + 0.0001) {
-      showToast(`Im Notgroschen sind nur noch ${fmt(notgroschenBalance)} verfügbar.`, 'error');
+    if (oldTx) {
+      const rev = reverseTxSideEffects(oldTx, workDebts, workNg, workBroker);
+      workDebts = rev.debts;
+      workNg = rev.notgroschenBalance;
+      workBroker = rev.portfolioBrokerCash;
+    }
+
+    const activeForLink = workDebts.filter((d) => d.remaining > 0);
+    if (form.type === 'ausgabe' && form.category === 'Kreditrate' && activeForLink.length > 0 && !form.linkedDebtId) {
+      showToast('Bitte eine Schuld unter Boost auswählen (oder Kategorie ändern).', 'error');
       return;
     }
-    if (form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot' && amt > portfolioBrokerCash + 0.0001) {
-      showToast(`Im Cash Depot sind nur noch ${fmt(portfolioBrokerCash)} verfügbar.`, 'error');
+
+    if (form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen' && amt > workNg + 0.0001) {
+      showToast(`Im Notgroschen sind nur noch ${fmt(workNg)} verfügbar.`, 'error');
+      return;
+    }
+    if (form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot' && amt > workBroker + 0.0001) {
+      showToast(`Im Cash Depot sind nur noch ${fmt(workBroker)} verfügbar.`, 'error');
       return;
     }
 
@@ -2490,7 +2615,7 @@ export default function AllWin() {
     let tilgRestAfter: number | undefined;
     if (form.type === 'ausgabe' && form.category === 'Kreditrate' && form.linkedDebtId) {
       const did = parseInt(form.linkedDebtId, 10);
-      const dRow = debts.find((d) => d.id === did && d.remaining > 0);
+      const dRow = workDebts.find((d) => d.id === did && d.remaining > 0);
       if (!dRow) {
         showToast('Schuld nicht gefunden oder schon erledigt.', 'error');
         return;
@@ -2507,34 +2632,34 @@ export default function AllWin() {
       form.paymentMethod !== 'Notgroschen' &&
       form.paymentMethod !== 'Einzahlung Cash Depot'
     ) {
-      notgroNewBal = Math.round((notgroschenBalance + amt) * 100) / 100;
+      notgroNewBal = Math.round((workNg + amt) * 100) / 100;
     }
 
     let notgroAfterDebit: number | undefined;
     if (form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen') {
-      notgroAfterDebit = Math.round((notgroschenBalance - amt) * 100) / 100;
+      notgroAfterDebit = Math.round((workNg - amt) * 100) / 100;
     }
 
     let brokerCashAfterSpend: number | undefined;
     if (form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot') {
-      brokerCashAfterSpend = Math.round((portfolioBrokerCash - amt) * 100) / 100;
+      brokerCashAfterSpend = Math.round((workBroker - amt) * 100) / 100;
     }
 
     let brokerCashAfterEinzahlung: number | undefined;
     if (form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot') {
-      brokerCashAfterEinzahlung = Math.round((portfolioBrokerCash + amt) * 100) / 100;
+      brokerCashAfterEinzahlung = Math.round((workBroker + amt) * 100) / 100;
     }
 
     let brokerCashAfterDividend: number | undefined;
     if (form.type === 'einnahme' && form.category === 'Dividende') {
-      brokerCashAfterDividend = Math.round((portfolioBrokerCash + amt) * 100) / 100;
+      brokerCashAfterDividend = Math.round((workBroker + amt) * 100) / 100;
     }
 
     const { paymentMethod, linkedDebtId: _ld, ...rest } = form;
     const txDate = /^\d{4}-\d{2}-\d{2}$/.test(form.date) ? form.date : todayIsoDate();
     const row: Transaction = {
       ...rest,
-      id: Date.now(),
+      id: editingTxId ?? Date.now(),
       date: txDate,
       ...(paymentMethod ? { paymentMethod } : {}),
       ...(linkedDebtId != null ? { linkedDebtId, linkedDebtName } : {}),
@@ -2545,18 +2670,19 @@ export default function AllWin() {
       ...(form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot' ? { debitsCashDepot: true } : {}),
       ...(form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot' ? { creditsCashDepot: true } : {}),
     };
-    const nextTransactions = [row, ...transactions];
-    let nextDebts = debts;
+    const baseTx = editingTxId != null ? transactions.filter((t) => t.id !== editingTxId) : transactions;
+    const nextTransactions = [row, ...baseTx];
+    let nextDebts = workDebts;
     if (form.type === 'ausgabe' && form.category === 'Kreditrate' && linkedDebtId != null && tilgRestAfter !== undefined) {
       const did = linkedDebtId;
       const stamp = new Date().toLocaleString('de-DE');
-      nextDebts = debts.map((d) => {
+      nextDebts = workDebts.map((d) => {
         if (d.id !== did) return d;
         return tilgRestAfter === 0 ? { ...d, remaining: 0, archivedAt: d.archivedAt ?? stamp } : { ...d, remaining: tilgRestAfter };
       });
     }
-    const nextNg = notgroNewBal ?? notgroAfterDebit ?? notgroschenBalance;
-    const nextBroker = brokerCashAfterSpend ?? brokerCashAfterEinzahlung ?? brokerCashAfterDividend ?? portfolioBrokerCash;
+    const nextNg = notgroNewBal ?? notgroAfterDebit ?? workNg;
+    const nextBroker = brokerCashAfterSpend ?? brokerCashAfterEinzahlung ?? brokerCashAfterDividend ?? workBroker;
     flushSync(() => {
       setTx(nextTransactions);
       if (nextDebts !== debts) setDebts(nextDebts);
@@ -2570,7 +2696,8 @@ export default function AllWin() {
       notgroschenTarget: notgroschenTarget,
       portfolioBrokerCash: nextBroker,
     });
-    setForm((f) => ({ ...f, amount: '', note: '', paymentMethod: '', linkedDebtId: '', date: todayIsoDate() }));
+    const wasEdit = editingTxId != null;
+    resetMoneyForm();
 
     if (form.type === 'ausgabe' && form.category === 'Kreditrate' && linkedDebtId != null && linkedDebtName && tilgRestAfter !== undefined) {
       const ngSuffix =
@@ -2606,14 +2733,18 @@ export default function AllWin() {
     } else if (form.type === 'einnahme' && form.category === 'Dividende' && brokerCashAfterDividend !== undefined) {
       showToast(`💸 Dividende gebucht — Cash Depot jetzt ${fmt(brokerCashAfterDividend)}`);
     } else {
-      let msg = form.type === 'einnahme' ? '💰 Einnahme gespeichert!' : '✅ Ausgabe gespeichert!';
-      if (form.type === 'ausgabe' && form.category === 'Kreditrate' && activeForLink.length === 0) {
+      let msg = wasEdit
+        ? '✏️ Buchung aktualisiert!'
+        : form.type === 'einnahme'
+          ? '💰 Einnahme gespeichert!'
+          : '✅ Ausgabe gespeichert!';
+      if (!wasEdit && form.type === 'ausgabe' && form.category === 'Kreditrate' && activeForLink.length === 0) {
         msg += ' Hinweis: In Boost eine Schuld anlegen, dann Tilgung hier zuordnen.';
       }
-      if (form.type === 'ausgabe' && FIXKOST_CATEGORIES.has(form.category)) {
+      if (!wasEdit && form.type === 'ausgabe' && FIXKOST_CATEGORIES.has(form.category)) {
         msg += ' In „Laufende Fixkosten“ siehst du den letzten Betrag je Position.';
       }
-      if (form.type === 'ausgabe' && VAR_KOST_CATEGORIES.has(form.category)) {
+      if (!wasEdit && form.type === 'ausgabe' && VAR_KOST_CATEGORIES.has(form.category)) {
         msg += ' Unter „Variable Kosten“ siehst du den letzten Betrag je Kategorie + Notiz.';
       }
       showToast(msg);
@@ -3904,8 +4035,8 @@ export default function AllWin() {
         )}
         {moneyTxListExpanded &&
           transactions.slice(0, 15).map((tx) => (
-            <div key={tx.id} style={S.txRow}>
-              <div>
+            <div key={tx.id} style={{ ...S.txRow, alignItems: 'flex-start', gap: 8 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{tx.category}</div>
                 <div style={{ fontSize: 11, color: '#7d8590' }}>
                   {(() => {
@@ -3918,9 +4049,40 @@ export default function AllWin() {
                   })()}
                 </div>
               </div>
-              <div style={{ fontWeight: 700, color: tx.type === 'einnahme' ? '#2563eb' : '#ff7b7b' }}>
-                {tx.type === 'einnahme' ? '+' : '-'}
-                {fmt(+tx.amount)}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+                <div style={{ fontWeight: 700, color: tx.type === 'einnahme' ? '#2563eb' : '#ff7b7b' }}>
+                  {tx.type === 'einnahme' ? '+' : '-'}
+                  {fmt(+tx.amount)}
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    type="button"
+                    aria-label="Buchung bearbeiten"
+                    onClick={() => startEditTx(tx)}
+                    style={{
+                      ...S.chip(editingTxId === tx.id),
+                      marginTop: 0,
+                      padding: '5px 10px',
+                      fontSize: 11,
+                    }}
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Buchung löschen"
+                    onClick={() => deleteTx(tx.id)}
+                    style={{
+                      ...S.chip(false),
+                      marginTop: 0,
+                      padding: '5px 10px',
+                      fontSize: 11,
+                      color: '#ff7b7b',
+                    }}
+                  >
+                    🗑️
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -4022,11 +4184,13 @@ export default function AllWin() {
             textAlign: 'left',
           }}
         >
-          <div style={S.label}>✨ Neue Buchung</div>
+          <div style={S.label}>{editingTxId != null ? '✏️ Buchung bearbeiten' : '✨ Neue Buchung'}</div>
           <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700, flexShrink: 0 }}>{moneyFormOpen ? '▼' : '▶'}</span>
         </button>
         {!moneyFormOpen && (
-          <div style={{ fontSize: 11, color: '#8b949e', marginTop: 2 }}>Antippen, um eine Buchung einzutragen.</div>
+          <div style={{ fontSize: 11, color: '#8b949e', marginTop: 2 }}>
+            {editingTxId != null ? 'Formular ist geöffnet — unten speichern oder abbrechen.' : 'Antippen, um eine Buchung einzutragen.'}
+          </div>
         )}
         {moneyFormOpen && (
         <>
@@ -4156,9 +4320,16 @@ export default function AllWin() {
             value={form.note}
             onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
           />
-          <button style={S.btn()} onClick={addTx}>
-            ✅ Speichern
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
+            <button style={{ ...S.btn(), flex: 1, minWidth: 120 }} onClick={addTx}>
+              {editingTxId != null ? '✅ Aktualisieren' : '✅ Speichern'}
+            </button>
+            {editingTxId != null && (
+              <button type="button" style={{ ...S.chip(false), marginTop: 8, flex: 1, minWidth: 100 }} onClick={resetMoneyForm}>
+                Abbrechen
+              </button>
+            )}
+          </div>
         </div>
         </>
         )}
