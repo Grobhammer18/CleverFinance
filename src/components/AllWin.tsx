@@ -355,9 +355,24 @@ type Debt = {
   monthly: number;
   /** Konsum/Dispo vs. Haus — für LevelUp-Freigabe-Logik */
   kind?: 'consumer' | 'house';
+  /** Nur Hauskredit: aktueller Marktwert der Immobilie (Gegenwert) */
+  propertyValue?: number;
   /** gesetzt wenn Rest = 0 → erscheint nur noch im Archiv */
   archivedAt?: string;
 };
+
+function debtPropertyValue(d: Debt): number {
+  const v = d.propertyValue;
+  return typeof v === 'number' && !Number.isNaN(v) && v > 0 ? Math.round(v * 100) / 100 : 0;
+}
+
+/** Marktwert − Restschuld (nur Hauskredit mit hinterlegtem Wert). */
+function debtEquity(d: Debt): number | null {
+  if (d.kind !== 'house') return null;
+  const pv = debtPropertyValue(d);
+  if (pv <= 0) return null;
+  return Math.round((pv - d.remaining) * 100) / 100;
+}
 
 function todayIsoDate() {
   return new Date().toLocaleDateString('sv-SE');
@@ -1446,6 +1461,7 @@ export default function AllWin() {
   const [newDebtInterest, setNewDebtInterest] = useState('');
   const [newDebtMonthly, setNewDebtMonthly] = useState('');
   const [newDebtKind, setNewDebtKind] = useState<'consumer' | 'house'>('consumer');
+  const [newDebtPropertyValue, setNewDebtPropertyValue] = useState('');
   const [debtArchiveOpen, setDebtArchiveOpen] = useState(true);
   const [boostHouseDebtsOpen, setBoostHouseDebtsOpen] = useState(true);
   const [boostConsumerDebtsOpen, setBoostConsumerDebtsOpen] = useState(true);
@@ -1742,6 +1758,23 @@ export default function AllWin() {
     return r;
   }, [market]);
   const totalDebt = debts.reduce((s, d) => s + d.remaining, 0);
+  const housePropertyValueTotal = useMemo(
+    () =>
+      debts
+        .filter((d) => d.kind === 'house' && d.remaining > 0)
+        .reduce((s, d) => s + debtPropertyValue(d), 0),
+    [debts],
+  );
+  const houseEquityTotal = useMemo(
+    () =>
+      debts
+        .filter((d) => d.kind === 'house' && d.remaining > 0)
+        .reduce((s, d) => {
+          const eq = debtEquity(d);
+          return eq != null ? s + eq : s;
+        }, 0),
+    [debts],
+  );
   vermogenSnapRef.current = { notgroschenBalance, portfolioTotalPower, totalDebt };
   const subEffective: SubscriptionState = DEV_FORCE_ELITE ? { ...sub, tier: 'elite' } : sub;
   const isPaidPlan = subEffective.tier !== 'free';
@@ -2977,7 +3010,16 @@ export default function AllWin() {
     setNewDebtInterest('');
     setNewDebtMonthly('');
     setNewDebtKind('consumer');
+    setNewDebtPropertyValue('');
     setDebtAddOpen(false);
+  };
+
+  const parseDebtPropertyValueInput = (): number | undefined | 'invalid' => {
+    const raw = newDebtPropertyValue.trim().replace(/\s/g, '').replace(',', '.');
+    if (!raw) return undefined;
+    const pv = parseFloat(raw);
+    if (Number.isNaN(pv) || pv < 0) return 'invalid';
+    return pv > 0 ? Math.round(pv * 100) / 100 : undefined;
   };
 
   const startEditDebt = (id: number) => {
@@ -2989,6 +3031,7 @@ export default function AllWin() {
     setNewDebtInterest(String(d.interest));
     setNewDebtMonthly(String(d.monthly));
     setNewDebtKind(d.kind === 'house' ? 'house' : 'consumer');
+    setNewDebtPropertyValue(d.kind === 'house' && debtPropertyValue(d) > 0 ? String(debtPropertyValue(d)) : '');
     setDebtAddOpen(true);
   };
 
@@ -3017,6 +3060,11 @@ export default function AllWin() {
     const nextInterest = Math.round(interest * 100) / 100;
     const nextMonthly = Math.round(monthly * 100) / 100;
     const nextTotal = Math.round(total * 100) / 100;
+    const parsedProperty = newDebtKind === 'house' ? parseDebtPropertyValueInput() : undefined;
+    if (parsedProperty === 'invalid') {
+      showToast('Marktwert der Immobilie ungültig.', 'error');
+      return;
+    }
     if (editingDebtId != null) {
       setDebts((prev) =>
         prev.map((d) =>
@@ -3030,6 +3078,7 @@ export default function AllWin() {
                 interest: nextInterest,
                 monthly: nextMonthly,
                 kind: newDebtKind,
+                propertyValue: newDebtKind === 'house' ? parsedProperty : undefined,
               },
         ),
       );
@@ -3048,6 +3097,7 @@ export default function AllWin() {
         interest: nextInterest,
         monthly: nextMonthly,
         kind: newDebtKind,
+        ...(newDebtKind === 'house' && parsedProperty != null ? { propertyValue: parsedProperty } : {}),
       },
     ]);
     showToast(`Schuld „${name}“ aufgenommen! ⚡`);
@@ -4089,6 +4139,13 @@ export default function AllWin() {
             <div style={S.label}>💥 Schulden-Status</div>
             <div style={{ color: '#f0883e', fontWeight: 800 }}>{fmt(totalDebt)}</div>
           </div>
+          {housePropertyValueTotal > 0 && (
+            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10, lineHeight: 1.45 }}>
+              🏠 Immobilien-Eigenkapital:{' '}
+              <strong style={{ color: houseEquityTotal >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(houseEquityTotal)}</strong>
+              <span style={{ color: '#484f58' }}> (Marktwert {fmt(housePropertyValueTotal)} − Kredit)</span>
+            </div>
+          )}
           {debts
             .filter((d) => d.remaining > 0)
             .map((d) => (
@@ -4845,6 +4902,8 @@ export default function AllWin() {
     const renderActiveDebtCard = (d: Debt, groupPeers: Debt[]) => {
       const pct = d.total > 0 ? ((d.total - d.remaining) / d.total) * 100 : 0;
       const otherOpenInGroup = groupPeers.filter((x) => x.id !== d.id).length;
+      const pv = debtPropertyValue(d);
+      const equity = debtEquity(d);
       return (
         <div key={d.id} style={{ ...S.debtCard, border: `1px solid ${awBg.cardBorder}`, marginBottom: 10 }}>
           <div style={S.row}>
@@ -4859,6 +4918,31 @@ export default function AllWin() {
             <span style={{ fontSize: 12, color: '#7d8590' }}>Noch offen 🎯</span>
             <span style={{ fontWeight: 700, color: '#f0883e' }}>{fmt(d.remaining)}</span>
           </div>
+          {pv > 0 && equity != null && (
+            <div
+              style={{
+                marginBottom: 8,
+                padding: '8px 10px',
+                borderRadius: 8,
+                background: '#0f141b',
+                border: '1px solid #2563eb44',
+              }}
+            >
+              <div style={{ ...S.row, marginBottom: 4 }}>
+                <span style={{ fontSize: 11, color: '#8b949e' }}>🏠 Marktwert Immobilie</span>
+                <span style={{ fontWeight: 700, color: '#93c5fd' }}>{fmt(pv)}</span>
+              </div>
+              <div style={S.row}>
+                <span style={{ fontSize: 11, color: '#8b949e' }}>Eigenkapital (netto)</span>
+                <span style={{ fontWeight: 800, color: equity >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(equity)}</span>
+              </div>
+              {equity < 0 && (
+                <div style={{ fontSize: 10, color: '#ff7b7b', marginTop: 6, lineHeight: 1.4 }}>
+                  Restschuld liegt über dem Marktwert — Wert in „Bearbeiten“ anpassen.
+                </div>
+              )}
+            </div>
+          )}
           <Bar pct={pct} color="#f0883e" />
           <div style={{ fontSize: 11, color: '#7d8590', textAlign: 'right', marginTop: 4 }}>{Math.round(pct)}% getilgt</div>
           {otherOpenInGroup > 0 && (
@@ -4950,6 +5034,12 @@ export default function AllWin() {
       );
     };
 
+    const housePropertySum = houseDebts.reduce((s, d) => s + debtPropertyValue(d), 0);
+    const houseEquitySum = houseDebts.reduce((s, d) => {
+      const eq = debtEquity(d);
+      return eq != null ? s + eq : s;
+    }, 0);
+
     const renderDebtGroup = (
       title: string,
       groupDebts: Debt[],
@@ -4957,6 +5047,7 @@ export default function AllWin() {
       monthlySum: number,
       open: boolean,
       onToggle: () => void,
+      showPropertyMetrics = false,
     ) => {
       if (groupDebts.length === 0) return null;
       return (
@@ -4990,6 +5081,15 @@ export default function AllWin() {
                     · Raten gesamt <strong style={{ color: '#e6edf3' }}>{fmt(monthlySum)}</strong>/Monat
                   </>
                 ) : null}
+                {showPropertyMetrics && housePropertySum > 0 ? (
+                  <>
+                    <div style={{ marginTop: 6 }}>
+                      Marktwert gesamt <strong style={{ color: '#93c5fd' }}>{fmt(housePropertySum)}</strong>
+                      {' · '}
+                      Eigenkapital gesamt <strong style={{ color: houseEquitySum >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(houseEquitySum)}</strong>
+                    </div>
+                  </>
+                ) : null}
               </div>
             </div>
             <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700, flexShrink: 0 }}>{open ? '▼' : '▶'}</span>
@@ -4997,6 +5097,26 @@ export default function AllWin() {
           {open ? (
             <>
               {groupDebts.map((d) => renderActiveDebtCard(d, groupDebts))}
+              {showPropertyMetrics && housePropertySum > 0 && (
+                <div
+                  style={{
+                    marginBottom: 10,
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: '1px solid #2563eb44',
+                    background: '#121820',
+                    fontSize: 12,
+                    color: '#8b949e',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    flexWrap: 'wrap' as const,
+                  }}
+                >
+                  <span>Immobilie netto (Marktwert − Kredite)</span>
+                  <span style={{ fontWeight: 800, color: houseEquitySum >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(houseEquitySum)}</span>
+                </div>
+              )}
               {groupDebts.length > 1 && (
                 <div
                   style={{
@@ -5038,7 +5158,19 @@ export default function AllWin() {
             <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>💳 Kreditschulden (gesamt)</div>
             <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: '#f0883e' }}>{fmt(consumerDebtSum)}</div>
           </div>
+          {housePropertySum > 0 && (
+            <div style={{ flex: 1, minWidth: 150, border: '1px solid #2563eb44', borderRadius: 10, padding: '8px 10px', background: '#0f141b' }}>
+              <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>🏠 Immobilien-Eigenkapital</div>
+              <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: houseEquitySum >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(houseEquitySum)}</div>
+              <div style={{ fontSize: 10, color: '#7d8590', marginTop: 4 }}>Marktwert {fmt(housePropertySum)} − Kredit {fmt(houseDebtSum)}</div>
+            </div>
+          )}
         </div>
+        {levelUpLocked && housePropertySum === 0 && houseDebts.length > 0 && (
+          <div style={{ fontSize: 11, color: '#7d8590', marginTop: 10, lineHeight: 1.45 }}>
+            Tipp: Unter „Hauskredit“ bei jeder Immobilie den <strong style={{ color: '#c9d1d9' }}>Marktwert</strong> eintragen (Bearbeiten) — dann siehst du dein Eigenkapital auch ohne LevelUp.
+          </div>
+        )}
       </div>
 
       <div style={{ ...S.card, border: '1px solid #2563eb33' }}>
@@ -5112,6 +5244,20 @@ export default function AllWin() {
               value={newDebtMonthly}
               onChange={(e) => setNewDebtMonthly(e.target.value)}
             />
+            {newDebtKind === 'house' && (
+              <>
+                <input
+                  style={S.input}
+                  inputMode="decimal"
+                  placeholder="Marktwert der Immobilie (€, optional)"
+                  value={newDebtPropertyValue}
+                  onChange={(e) => setNewDebtPropertyValue(e.target.value)}
+                />
+                <div style={{ fontSize: 11, color: '#7d8590', lineHeight: 1.45, marginTop: -4 }}>
+                  Gegenwert der Immobilie — auch ohne LevelUp. Eigenkapital = Marktwert minus noch offene Restschuld.
+                </div>
+              </>
+            )}
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <button type="button" style={{ ...S.btn(), flex: 1, marginTop: 0 }} onClick={addDebtEntry}>
                 {editingDebtId != null ? '✅ Änderungen speichern' : '✅ Schuld speichern'}
@@ -5150,6 +5296,7 @@ export default function AllWin() {
         houseMonthlySum,
         boostHouseDebtsOpen,
         () => setBoostHouseDebtsOpen((o) => !o),
+        true,
       )}
       {renderDebtGroup(
         '💳 Kreditschulden',
