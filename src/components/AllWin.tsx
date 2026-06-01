@@ -313,6 +313,44 @@ type FormState = {
   linkedDebtId: string;
 };
 
+/** Offline-Backup pro User — überlebt Refresh, falls Cloud-Sync noch nicht fertig war. */
+type UserStateCache = {
+  transactions?: Transaction[];
+  debts?: Debt[];
+  notgroschenBalance?: number;
+  notgroschenTarget?: number;
+  portfolioBrokerCash?: number;
+  savedAt?: number;
+};
+
+function userStateCacheKey(userId: string) {
+  return `allwin.userCache.${userId}`;
+}
+
+function readUserStateCache(userId: string | undefined): UserStateCache | null {
+  if (!userId) return null;
+  try {
+    const raw = localStorage.getItem(userStateCacheKey(userId));
+    if (!raw) return null;
+    return JSON.parse(raw) as UserStateCache;
+  } catch {
+    return null;
+  }
+}
+
+function writeUserStateCache(userId: string | undefined, patch: UserStateCache) {
+  if (!userId) return;
+  try {
+    const prev = readUserStateCache(userId) || {};
+    localStorage.setItem(
+      userStateCacheKey(userId),
+      JSON.stringify({ ...prev, ...patch, savedAt: Date.now() }),
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
 type ToastState = {
   msg: string;
   type: 'success' | 'error' | 'level';
@@ -1405,6 +1443,24 @@ export default function AllWin() {
     cloudOnboardingHydratedRef.current = false;
     cloudPersistReadyRef.current = false;
     setOnboardingDone(readLocalOnboardingDone(authUser.id, authUser.email));
+    const cached = readUserStateCache(authUser.id);
+    if (cached) {
+      flushSync(() => {
+        if (Array.isArray(cached.transactions)) setTx(cached.transactions);
+        if (Array.isArray(cached.debts)) {
+          setDebts(cached.debts.map((d) => ({ ...d, kind: d.kind === 'house' ? 'house' : 'consumer' })));
+        }
+        if (typeof cached.notgroschenBalance === 'number' && !Number.isNaN(cached.notgroschenBalance)) {
+          setNotgroschenBalance(cached.notgroschenBalance);
+        }
+        if (typeof cached.notgroschenTarget === 'number' && !Number.isNaN(cached.notgroschenTarget)) {
+          setNotgroschenTarget(cached.notgroschenTarget);
+        }
+        if (typeof cached.portfolioBrokerCash === 'number' && !Number.isNaN(cached.portfolioBrokerCash)) {
+          setPortfolioBrokerCash(Math.max(0, cached.portfolioBrokerCash));
+        }
+      });
+    }
   }, [authUser?.id, authUser?.email, authToken]);
 
   const chartTimelineEndMs = useMemo(
@@ -1692,15 +1748,16 @@ export default function AllWin() {
         }
         const data = await res.json();
         const state = data?.state || {};
-        if (Array.isArray(state.debts)) {
-          setDebts(
-            state.debts.map((d: Debt) => ({
-              ...d,
-              kind: d.kind === 'house' ? 'house' : 'consumer',
-            })),
-          );
-        }
-        if (Array.isArray(state.transactions)) setTx(state.transactions);
+        const cached = readUserStateCache(authUser.id);
+        const cloudTx = Array.isArray(state.transactions) ? (state.transactions as Transaction[]) : [];
+        const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : [];
+        const transactionsToApply = cloudTx.length > 0 ? cloudTx : cachedTx;
+        const cloudDebts = Array.isArray(state.debts) ? (state.debts as Debt[]) : [];
+        const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : [];
+        const debtsToApply = cloudDebts.length > 0 ? cloudDebts : cachedDebts;
+        let ngBal = notgroschenBalance;
+        let ngTarget = notgroschenTarget;
+        let brokerCash = portfolioBrokerCash;
         if (state.subscription?.tier && state.subscription?.cycle) setSub(state.subscription);
         if (state.notifications) setNotifSettings(state.notifications);
         const ob = state.onboarding;
@@ -1734,12 +1791,21 @@ export default function AllWin() {
         if (ng && typeof ng === 'object') {
           const b = (ng as { balance?: unknown }).balance;
           const t = (ng as { target?: unknown }).target;
-          if (typeof b === 'number' && !Number.isNaN(b)) setNotgroschenBalance(b);
-          if (typeof t === 'number' && !Number.isNaN(t)) setNotgroschenTarget(t);
+          if (typeof b === 'number' && !Number.isNaN(b)) ngBal = b;
+          if (typeof t === 'number' && !Number.isNaN(t)) ngTarget = t;
         } else if (ob?.v2 && typeof ob.v2 === 'object') {
           const v2 = ob.v2 as OnboardingV2Payload;
-          setNotgroschenTarget(notgroschenTargetFromIncome(v2.netIncomeMonthly));
-          if (v2.emergency?.has) setNotgroschenBalance(Math.max(0, v2.emergency.balance));
+          ngTarget = notgroschenTargetFromIncome(v2.netIncomeMonthly);
+          if (v2.emergency?.has) ngBal = Math.max(0, v2.emergency.balance);
+        } else if (cached) {
+          if (typeof cached.notgroschenBalance === 'number') ngBal = cached.notgroschenBalance;
+          if (typeof cached.notgroschenTarget === 'number') ngTarget = cached.notgroschenTarget;
+        }
+        const pbcCloud = (state as { portfolioBrokerCash?: unknown }).portfolioBrokerCash;
+        if (typeof pbcCloud === 'number' && !Number.isNaN(pbcCloud)) {
+          brokerCash = Math.max(0, pbcCloud);
+        } else if (typeof cached?.portfolioBrokerCash === 'number') {
+          brokerCash = Math.max(0, cached.portfolioBrokerCash);
         }
         const cloudExtras = normalizeWatchlistExtrasPersist((state as { watchlistExtras?: unknown }).watchlistExtras);
         setWatchlistExtras(cloudExtras);
@@ -1773,23 +1839,44 @@ export default function AllWin() {
         if (Array.isArray(state.portfolioTrades)) {
           setPortfolioTrades(normalizePortfolioTrades(state.portfolioTrades, symSetTradable));
         }
-        const pbc = (state as { portfolioBrokerCash?: unknown }).portfolioBrokerCash;
-        if (typeof pbc === 'number' && !Number.isNaN(pbc)) setPortfolioBrokerCash(Math.max(0, pbc));
         const dailyVs = (state as { dailyVermogenSnapshots?: unknown }).dailyVermogenSnapshots;
-        setDailyVermogenSnapshots(normalizeDailyVermogenSnapshots(dailyVs));
+        const dailySnaps = normalizeDailyVermogenSnapshots(dailyVs);
         const prof = state.profile;
+        let genderLoad = '';
+        let ordenLoad: string[] = [];
         if (prof && typeof prof === 'object') {
           const g = (prof as { gender?: unknown }).gender;
-          setProfileGender(typeof g === 'string' ? g : '');
+          genderLoad = typeof g === 'string' ? g : '';
           const pr = prof as { ordenEarnedPresetIds?: unknown; manualOrden?: unknown };
-          setEarnedOrdenPresetIds(normalizeEarnedOrdenOnLoad(pr.ordenEarnedPresetIds, pr.manualOrden));
-        } else {
-          setProfileGender('');
-          setEarnedOrdenPresetIds([]);
+          ordenLoad = normalizeEarnedOrdenOnLoad(pr.ordenEarnedPresetIds, pr.manualOrden);
         }
+        flushSync(() => {
+          setDebts(
+            debtsToApply.map((d) => ({
+              ...d,
+              kind: d.kind === 'house' ? 'house' : 'consumer',
+            })),
+          );
+          setTx(transactionsToApply);
+          setNotgroschenBalance(ngBal);
+          setNotgroschenTarget(ngTarget);
+          setPortfolioBrokerCash(brokerCash);
+          setDailyVermogenSnapshots(dailySnaps);
+          setProfileGender(genderLoad);
+          setEarnedOrdenPresetIds(ordenLoad);
+        });
+        writeUserStateCache(authUser.id, {
+          transactions: transactionsToApply,
+          debts: debtsToApply,
+          notgroschenBalance: ngBal,
+          notgroschenTarget: ngTarget,
+          portfolioBrokerCash: brokerCash,
+        });
         cloudOnboardingHydratedRef.current = true;
-        cloudPersistReadyRef.current = true;
-        setCloudUserStateReady(true);
+        window.setTimeout(() => {
+          cloudPersistReadyRef.current = true;
+          setCloudUserStateReady(true);
+        }, 0);
       } finally {
         setHydrating(false);
       }
@@ -1797,24 +1884,37 @@ export default function AllWin() {
     void loadUserState();
   }, [BILLING_API, authToken, authUser]);
 
-  useEffect(() => {
-    if (!authUser || !authToken || isHydrating || !cloudUserStateReady || !cloudPersistReadyRef.current) return;
-    const id = setTimeout(() => {
+  const persistUserState = useCallback(
+    (override?: UserStateCache) => {
+      if (!authToken || !authUser?.id || !BILLING_API) return;
+      const txList = override?.transactions ?? transactions;
+      const debtList = override?.debts ?? debts;
+      const ngB = override?.notgroschenBalance ?? notgroschenBalance;
+      const ngT = override?.notgroschenTarget ?? notgroschenTarget;
+      const broker = override?.portfolioBrokerCash ?? portfolioBrokerCash;
+      writeUserStateCache(authUser.id, {
+        transactions: txList,
+        debts: debtList,
+        notgroschenBalance: ngB,
+        notgroschenTarget: ngT,
+        portfolioBrokerCash: broker,
+      });
+      if (!cloudPersistReadyRef.current) return;
       const statePayload: Record<string, unknown> = {
-            debts,
-            transactions,
-            subscription: sub,
-            profile: { gender: profileGender, ordenEarnedPresetIds: earnedOrdenPresetIds },
-            notgroschen: { balance: notgroschenBalance, target: notgroschenTarget },
-            notifications: notifSettings,
-            portfolio: +portfolioEuroValue(portfolioShares, tradableMarket).toFixed(2),
-            portfolioAlloc: valueWeightsFromShares(portfolioShares, tradableMarket),
-            portfolioShares,
-            portfolioTrades,
-            portfolioBrokerCash,
-            watchlistExtras,
-            portfolioExcludedBaseSyms,
-            dailyVermogenSnapshots,
+        debts: debtList,
+        transactions: txList,
+        subscription: sub,
+        profile: { gender: profileGender, ordenEarnedPresetIds: earnedOrdenPresetIds },
+        notgroschen: { balance: ngB, target: ngT },
+        notifications: notifSettings,
+        portfolio: +portfolioEuroValue(portfolioShares, tradableMarket).toFixed(2),
+        portfolioAlloc: valueWeightsFromShares(portfolioShares, tradableMarket),
+        portfolioShares,
+        portfolioTrades,
+        portfolioBrokerCash: broker,
+        watchlistExtras,
+        portfolioExcludedBaseSyms,
+        dailyVermogenSnapshots,
       };
       if (cloudOnboardingHydratedRef.current) {
         const persistDone =
@@ -1831,9 +1931,37 @@ export default function AllWin() {
         },
         body: JSON.stringify({ state: statePayload }),
       });
-    }, 500);
+    },
+    [
+      BILLING_API,
+      authToken,
+      authUser,
+      transactions,
+      debts,
+      sub,
+      profileGender,
+      earnedOrdenPresetIds,
+      notgroschenBalance,
+      notgroschenTarget,
+      notifSettings,
+      tradableMarket,
+      portfolioShares,
+      portfolioTrades,
+      portfolioBrokerCash,
+      watchlistExtras,
+      portfolioExcludedBaseSyms,
+      dailyVermogenSnapshots,
+      onboardingDone,
+      onboardingV2,
+    ],
+  );
+
+  useEffect(() => {
+    if (!authUser || !authToken || isHydrating || !cloudUserStateReady || !cloudPersistReadyRef.current) return;
+    const id = setTimeout(() => persistUserState(), 500);
     return () => clearTimeout(id);
   }, [
+    persistUserState,
     BILLING_API,
     authToken,
     authUser,
@@ -2280,15 +2408,7 @@ export default function AllWin() {
       }
       linkedDebtId = did;
       linkedDebtName = dRow.name;
-      const stamp = new Date().toLocaleString('de-DE');
-      const newR = Math.max(0, dRow.remaining - amt);
-      tilgRestAfter = newR;
-      setDebts((prev) =>
-        prev.map((d) => {
-          if (d.id !== did) return d;
-          return newR === 0 ? { ...d, remaining: 0, archivedAt: d.archivedAt ?? stamp } : { ...d, remaining: newR };
-        }),
-      );
+      tilgRestAfter = Math.max(0, dRow.remaining - amt);
     }
 
     let notgroNewBal: number | undefined;
@@ -2299,31 +2419,26 @@ export default function AllWin() {
       form.paymentMethod !== 'Einzahlung Cash Depot'
     ) {
       notgroNewBal = Math.round((notgroschenBalance + amt) * 100) / 100;
-      setNotgroschenBalance(notgroNewBal);
     }
 
     let notgroAfterDebit: number | undefined;
     if (form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen') {
       notgroAfterDebit = Math.round((notgroschenBalance - amt) * 100) / 100;
-      setNotgroschenBalance(notgroAfterDebit);
     }
 
     let brokerCashAfterSpend: number | undefined;
     if (form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot') {
       brokerCashAfterSpend = Math.round((portfolioBrokerCash - amt) * 100) / 100;
-      setPortfolioBrokerCash(brokerCashAfterSpend);
     }
 
     let brokerCashAfterEinzahlung: number | undefined;
     if (form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot') {
       brokerCashAfterEinzahlung = Math.round((portfolioBrokerCash + amt) * 100) / 100;
-      setPortfolioBrokerCash(brokerCashAfterEinzahlung);
     }
 
     let brokerCashAfterDividend: number | undefined;
     if (form.type === 'einnahme' && form.category === 'Dividende') {
       brokerCashAfterDividend = Math.round((portfolioBrokerCash + amt) * 100) / 100;
-      setPortfolioBrokerCash(brokerCashAfterDividend);
     }
 
     const { paymentMethod, linkedDebtId: _ld, ...rest } = form;
@@ -2341,7 +2456,31 @@ export default function AllWin() {
       ...(form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot' ? { debitsCashDepot: true } : {}),
       ...(form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot' ? { creditsCashDepot: true } : {}),
     };
-    setTx((prev) => [row, ...prev]);
+    const nextTransactions = [row, ...transactions];
+    let nextDebts = debts;
+    if (form.type === 'ausgabe' && form.category === 'Kreditrate' && linkedDebtId != null && tilgRestAfter !== undefined) {
+      const did = linkedDebtId;
+      const stamp = new Date().toLocaleString('de-DE');
+      nextDebts = debts.map((d) => {
+        if (d.id !== did) return d;
+        return tilgRestAfter === 0 ? { ...d, remaining: 0, archivedAt: d.archivedAt ?? stamp } : { ...d, remaining: tilgRestAfter };
+      });
+    }
+    const nextNg = notgroNewBal ?? notgroAfterDebit ?? notgroschenBalance;
+    const nextBroker = brokerCashAfterSpend ?? brokerCashAfterEinzahlung ?? brokerCashAfterDividend ?? portfolioBrokerCash;
+    flushSync(() => {
+      setTx(nextTransactions);
+      if (nextDebts !== debts) setDebts(nextDebts);
+      if (nextNg !== notgroschenBalance) setNotgroschenBalance(nextNg);
+      if (nextBroker !== portfolioBrokerCash) setPortfolioBrokerCash(nextBroker);
+    });
+    persistUserState({
+      transactions: nextTransactions,
+      debts: nextDebts,
+      notgroschenBalance: nextNg,
+      notgroschenTarget: notgroschenTarget,
+      portfolioBrokerCash: nextBroker,
+    });
     setForm((f) => ({ ...f, amount: '', note: '', paymentMethod: '', linkedDebtId: '', date: todayIsoDate() }));
 
     if (form.type === 'ausgabe' && form.category === 'Kreditrate' && linkedDebtId != null && linkedDebtName && tilgRestAfter !== undefined) {
