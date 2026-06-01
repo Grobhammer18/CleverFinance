@@ -479,7 +479,16 @@ function markTxDeleted(userId: string | undefined, id: number) {
   writeDeletedTxIds(userId, next);
 }
 
-/** Cloud gewinnt bei Konflikt; Cache nur für noch nicht in Cloud — nie bewusst Gelöschtes. */
+/** Nach erfolgreichem Cloud-GET: nur Server-Liste (auch leer), kein Cache-Merge. */
+function transactionsFromCloud(cloud: Transaction[]): Transaction[] {
+  return [...cloud].sort(compareTxByDateDesc);
+}
+
+function debtsFromCloud(cloud: Debt[]): Debt[] {
+  return cloud.map((d) => ({ ...d, kind: d.kind === 'house' ? 'house' : 'consumer' }));
+}
+
+/** Cache ergänzt nur fehlende ids; Gelöschte bleiben ausgeschlossen. */
 function mergeTransactionsById(cloud: Transaction[], cached: Transaction[], userId?: string): Transaction[] {
   const deleted = readDeletedTxIds(userId);
   const cloudIds = new Set(cloud.map((t) => t.id));
@@ -1592,6 +1601,15 @@ export default function AllWin() {
   const cloudOnboardingHydratedRef = useRef(false);
   /** Verhindert PUT mit leerem State bevor GET erfolgreich geladen wurde (Refresh-Bug). */
   const cloudPersistReadyRef = useRef(false);
+  const cloudSavedAtRef = useRef(0);
+  const cloudPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cloudPersistAbortRef = useRef<AbortController | null>(null);
+  const clearPendingCloudPersist = useCallback(() => {
+    if (cloudPersistTimerRef.current != null) {
+      clearTimeout(cloudPersistTimerRef.current);
+      cloudPersistTimerRef.current = null;
+    }
+  }, []);
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
   const [authGate, setAuthGate] = useState<'welcome' | 'auth'>('welcome');
   const [onboardingDone, setOnboardingDone] = useState(false);
@@ -2058,10 +2076,15 @@ export default function AllWin() {
         const cached = readUserStateCache(authUser.id);
         const cloudTx = Array.isArray(state.transactions) ? (state.transactions as Transaction[]) : [];
         const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : transactions;
-        const transactionsToApply = mergeTransactionsById(cloudTx, cachedTx, authUser.id);
+        const transactionsToApply = Array.isArray(state.transactions)
+          ? transactionsFromCloud(cloudTx)
+          : mergeTransactionsById([], cachedTx, authUser.id);
+        cloudSavedAtRef.current = Number((state as { _clientSavedAt?: unknown })._clientSavedAt) || Date.now();
         const cloudDebts = Array.isArray(state.debts) ? (state.debts as Debt[]) : [];
         const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : debts;
-        const debtsToApply = mergeDebtsById(cloudDebts, cachedDebts);
+        const debtsToApply = Array.isArray(state.debts)
+          ? debtsFromCloud(cloudDebts)
+          : mergeDebtsById(cloudDebts, cachedDebts);
         let ngBal = notgroschenBalance;
         let ngTarget = notgroschenTarget;
         let brokerCash = portfolioBrokerCash;
@@ -2229,10 +2252,19 @@ export default function AllWin() {
         portfolioExcludedBaseSyms,
         dailyVermogenSnapshots,
       };
-      if (debtList.length > 0 || options?.replaceDebts) statePayload.debts = debtList;
-      if (txList.length > 0 || options?.replaceTransactions) statePayload.transactions = txList;
-      if (options?.replaceTransactions) statePayload._replaceTransactions = true;
-      if (options?.replaceDebts) statePayload._replaceDebts = true;
+      const canCloudPersist = cloudPersistReadyRef.current;
+      if (canCloudPersist) {
+        statePayload.transactions = txList;
+        statePayload.debts = debtList;
+        statePayload._replaceTransactions = true;
+        statePayload._replaceDebts = true;
+        statePayload._clientSavedAt = Date.now();
+      } else {
+        if (debtList.length > 0 || options?.replaceDebts) statePayload.debts = debtList;
+        if (txList.length > 0 || options?.replaceTransactions) statePayload.transactions = txList;
+        if (options?.replaceTransactions) statePayload._replaceTransactions = true;
+        if (options?.replaceDebts) statePayload._replaceDebts = true;
+      }
       statePayload.levelUpMode = levelUpMode;
       if (cloudOnboardingHydratedRef.current) {
         const persistDone =
@@ -2243,6 +2275,9 @@ export default function AllWin() {
         if (onboardingV2 != null) onboardingPayload.v2 = onboardingV2;
         statePayload.onboarding = onboardingPayload;
       }
+      cloudPersistAbortRef.current?.abort();
+      const abort = new AbortController();
+      cloudPersistAbortRef.current = abort;
       return fetch(`${BILLING_API}/api/user/state`, {
         method: 'PUT',
         headers: {
@@ -2250,15 +2285,26 @@ export default function AllWin() {
           Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({ state: statePayload }),
+        signal: abort.signal,
       })
-        .then((res) => {
+        .then(async (res) => {
+          if (abort.signal.aborted) return false;
           if (!res.ok) {
             if (import.meta.env.DEV) console.warn('[cloud] PUT /api/user/state', res.status);
             return false;
           }
+          try {
+            const body = await res.json();
+            if (typeof body?.clientSavedAt === 'number' && !Number.isNaN(body.clientSavedAt)) {
+              cloudSavedAtRef.current = body.clientSavedAt;
+            }
+          } catch {
+            /* ignore */
+          }
           return true;
         })
-        .catch(() => {
+        .catch((err: unknown) => {
+          if (err instanceof DOMException && err.name === 'AbortError') return false;
           /* Cloud-Sync fehlgeschlagen — lokaler Cache bleibt die Quelle */
           return false;
         });
@@ -2316,9 +2362,14 @@ export default function AllWin() {
 
   useEffect(() => {
     if (!authUser || !authToken || isHydrating || !cloudUserStateReady || !cloudPersistReadyRef.current) return;
-    const id = setTimeout(() => persistUserState(), 500);
-    return () => clearTimeout(id);
+    clearPendingCloudPersist();
+    cloudPersistTimerRef.current = setTimeout(() => {
+      cloudPersistTimerRef.current = null;
+      void persistUserState();
+    }, 500);
+    return () => clearPendingCloudPersist();
   }, [
+    clearPendingCloudPersist,
     persistUserState,
     BILLING_API,
     authToken,
@@ -2362,11 +2413,14 @@ export default function AllWin() {
         const cached = readUserStateCache(authUser.id);
         const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : [];
         const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : [];
-        const mergedTx = mergeTransactionsById(cloudTx, cachedTx, authUser.id);
-        const mergedDebts = mergeDebtsById(cloudDebts, cachedDebts);
+        const mergedTx = Array.isArray(state.transactions)
+          ? transactionsFromCloud(cloudTx)
+          : mergeTransactionsById(cloudTx, cachedTx, authUser.id);
+        cloudSavedAtRef.current = Number((state as { _clientSavedAt?: unknown })._clientSavedAt) || Date.now();
+        const mergedDebts = Array.isArray(state.debts) ? debtsFromCloud(cloudDebts) : mergeDebtsById(cloudDebts, cachedDebts);
         flushSync(() => {
           setTx(mergedTx);
-          setDebts(mergedDebts.map((d) => ({ ...d, kind: d.kind === 'house' ? 'house' : 'consumer' })));
+          setDebts(mergedDebts);
         });
         const ng = state.notgroschen;
         let ngB = notgroschenBalance;
@@ -2401,7 +2455,9 @@ export default function AllWin() {
       }
     };
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void pullMoneyFromCloud();
+      if (document.visibilityState !== 'visible') return;
+      clearPendingCloudPersist();
+      void pullMoneyFromCloud();
     };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
@@ -2409,7 +2465,7 @@ export default function AllWin() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
-  }, [authUser?.id, authToken, BILLING_API, cloudUserStateReady]);
+  }, [authUser?.id, authToken, BILLING_API, cloudUserStateReady, clearPendingCloudPersist]);
 
   useEffect(() => {
     const applyCheckoutResult = async () => {
@@ -2806,6 +2862,7 @@ export default function AllWin() {
     const rev = reverseTxSideEffects(tx, debts, notgroschenBalance, portfolioBrokerCash);
     const nextTx = transactions.filter((t) => t.id !== id);
     if (authUser?.id) markTxDeleted(authUser.id, id);
+    clearPendingCloudPersist();
     flushSync(() => {
       setTx(nextTx);
       setDebts(rev.debts);
@@ -2819,7 +2876,7 @@ export default function AllWin() {
         notgroschenBalance: rev.notgroschenBalance,
         portfolioBrokerCash: rev.portfolioBrokerCash,
       },
-      { replaceTransactions: true },
+      { replaceTransactions: true, replaceDebts: true },
     );
     if (editingTxId === id) resetMoneyForm();
     showToast(ok ? 'Buchung gelöscht.' : 'Lokal gelöscht — Cloud-Sync fehlgeschlagen. Bitte erneut versuchen.', ok ? 'success' : 'error');
@@ -2967,7 +3024,8 @@ export default function AllWin() {
       if (nextNg !== notgroschenBalance) setNotgroschenBalance(nextNg);
       if (nextBroker !== portfolioBrokerCash) setPortfolioBrokerCash(nextBroker);
     });
-    persistUserState({
+    clearPendingCloudPersist();
+    void persistUserState({
       transactions: nextTransactions,
       debts: nextDebts,
       notgroschenBalance: nextNg,

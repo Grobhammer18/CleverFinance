@@ -181,29 +181,6 @@ function stripEmptyOverwrites(prevState, incoming, opts = {}) {
   return next;
 }
 
-/**
- * Geräte können mit älterem Stand speichern (z. B. offener PC-Tab).
- * Dann dürfen neuere Cloud-Einträge nicht verloren gehen.
- * Merge-Regel:
- * - incoming überschreibt gleiche id
- * - fehlende ids aus prev bleiben erhalten
- */
-function mergeByNumericIdKeepMissing(prevArr, incomingArr) {
-  if (!Array.isArray(prevArr) || !Array.isArray(incomingArr)) return incomingArr;
-  const map = new Map();
-  for (const row of prevArr) {
-    const id = Number(row?.id);
-    if (!Number.isFinite(id)) continue;
-    map.set(id, row);
-  }
-  for (const row of incomingArr) {
-    const id = Number(row?.id);
-    if (!Number.isFinite(id)) continue;
-    map.set(id, row);
-  }
-  return Array.from(map.values());
-}
-
 function upsertOauthUser({ provider, providerId, email, name }) {
   const users = loadUsers();
   const pid = String(providerId || '');
@@ -515,14 +492,10 @@ app.put('/api/user/state', (req, res) => {
   const replaceTransactions = rawIncoming._replaceTransactions === true;
   const replaceDebts = rawIncoming._replaceDebts === true;
   const incoming = stripEmptyOverwrites(prevState, rawIncoming, { replaceTransactions, replaceDebts });
+  const clientSavedAt = Number(rawIncoming._clientSavedAt) || 0;
   delete incoming._replaceTransactions;
   delete incoming._replaceDebts;
-  if (!replaceTransactions && Array.isArray(prevState.transactions) && Array.isArray(incoming.transactions) && incoming.transactions.length > 0) {
-    incoming.transactions = mergeByNumericIdKeepMissing(prevState.transactions, incoming.transactions);
-  }
-  if (!replaceDebts && Array.isArray(prevState.debts) && Array.isArray(incoming.debts) && incoming.debts.length > 0) {
-    incoming.debts = mergeByNumericIdKeepMissing(prevState.debts, incoming.debts);
-  }
+  delete incoming._clientSavedAt;
   const prevOb = prevState.onboarding || {};
   const incOb = incoming.onboarding;
   let nextState = { ...prevState, ...incoming };
@@ -543,13 +516,16 @@ app.put('/api/user/state', (req, res) => {
     if (incOb.reset === true) delete mergedOb.reset;
     nextState = { ...nextState, onboarding: mergedOb };
   }
+  const nextSavedAt = Math.max(Number(prevState._clientSavedAt) || 0, clientSavedAt, Date.now());
+  nextState._clientSavedAt = nextSavedAt;
   users[index] = {
     ...users[index],
     state: nextState,
     updatedAt: new Date().toISOString(),
   };
   saveUsers(users);
-  return res.json({ ok: true });
+  const txCount = Array.isArray(nextState.transactions) ? nextState.transactions.length : 0;
+  return res.json({ ok: true, clientSavedAt: nextSavedAt, transactionCount: txCount });
 });
 
 app.post('/api/billing/create-checkout-session', async (req, res) => {
