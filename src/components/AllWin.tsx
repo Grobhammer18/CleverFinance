@@ -1440,6 +1440,7 @@ export default function AllWin() {
       : [],
   );
   const [debtAddOpen, setDebtAddOpen] = useState(false);
+  const [editingDebtId, setEditingDebtId] = useState<number | null>(null);
   const [newDebtName, setNewDebtName] = useState('');
   const [newDebtTotal, setNewDebtTotal] = useState('');
   const [newDebtInterest, setNewDebtInterest] = useState('');
@@ -2967,6 +2968,28 @@ export default function AllWin() {
     );
   };
 
+  const resetDebtForm = () => {
+    setEditingDebtId(null);
+    setNewDebtName('');
+    setNewDebtTotal('');
+    setNewDebtInterest('');
+    setNewDebtMonthly('');
+    setNewDebtKind('consumer');
+    setDebtAddOpen(false);
+  };
+
+  const startEditDebt = (id: number) => {
+    const d = debts.find((x) => x.id === id);
+    if (!d) return;
+    setEditingDebtId(id);
+    setNewDebtName(d.name);
+    setNewDebtTotal(String(d.total));
+    setNewDebtInterest(String(d.interest));
+    setNewDebtMonthly(String(d.monthly));
+    setNewDebtKind(d.kind === 'house' ? 'house' : 'consumer');
+    setDebtAddOpen(true);
+  };
+
   const addDebtEntry = () => {
     const name = newDebtName.trim();
     const total = parseFloat(newDebtTotal.replace(/\s/g, '').replace(',', '.'));
@@ -2989,26 +3012,44 @@ export default function AllWin() {
       showToast('Zinssatz ungültig.', 'error');
       return;
     }
+    const nextInterest = Math.round(interest * 100) / 100;
+    const nextMonthly = Math.round(monthly * 100) / 100;
+    const nextTotal = Math.round(total * 100) / 100;
+    if (editingDebtId != null) {
+      setDebts((prev) =>
+        prev.map((d) =>
+          d.id !== editingDebtId
+            ? d
+            : {
+                ...d,
+                name,
+                total: nextTotal,
+                remaining: Math.min(d.remaining, nextTotal),
+                interest: nextInterest,
+                monthly: nextMonthly,
+                kind: newDebtKind,
+              },
+        ),
+      );
+      showToast(`Schuld „${name}“ aktualisiert.`, 'success');
+      resetDebtForm();
+      return;
+    }
     const id = debts.length ? Math.max(...debts.map((d) => d.id)) + 1 : 1;
     setDebts((prev) => [
       ...prev,
       {
         id,
         name,
-        total,
-        remaining: total,
-        interest: Math.round(interest * 100) / 100,
-        monthly: Math.round(monthly * 100) / 100,
+        total: nextTotal,
+        remaining: nextTotal,
+        interest: nextInterest,
+        monthly: nextMonthly,
         kind: newDebtKind,
       },
     ]);
-    setNewDebtName('');
-    setNewDebtTotal('');
-    setNewDebtInterest('');
-    setNewDebtMonthly('');
-    setNewDebtKind('consumer');
-    setDebtAddOpen(false);
     showToast(`Schuld „${name}“ aufgenommen! ⚡`);
+    resetDebtForm();
   };
 
   const submitAuth = async () => {
@@ -4788,6 +4829,8 @@ export default function AllWin() {
 
   const renderDebts = () => {
     const activeDebts = debts.filter((d) => d.remaining > 0);
+    const houseDebtSum = activeDebts.filter((d) => d.kind === 'house').reduce((s, d) => s + d.remaining, 0);
+    const consumerDebtSum = activeDebts.filter((d) => d.kind !== 'house').reduce((s, d) => s + d.remaining, 0);
     const archivedDebts = debts
       .filter((d) => d.remaining <= 0)
       .sort((a, b) => (b.archivedAt || '').localeCompare(a.archivedAt || '') || b.id - a.id);
@@ -4798,13 +4841,25 @@ export default function AllWin() {
         <div style={S.label}>⚡ Gesamtschulden</div>
         <div style={{ ...S.bigNum, color: '#f0883e' }}>{fmt(totalDebt)}</div>
         <div style={{ fontSize: 12, color: '#7d8590', marginTop: 4 }}>Du schaffst das! Jede Tilgung bringt dich näher zur Freiheit. 💪</div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' as const }}>
+          <div style={{ flex: 1, minWidth: 150, border: '1px solid #f0883e44', borderRadius: 10, padding: '8px 10px', background: '#0f141b' }}>
+            <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>🏠 Hauskredit (gesamt)</div>
+            <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: '#f0883e' }}>{fmt(houseDebtSum)}</div>
+          </div>
+          <div style={{ flex: 1, minWidth: 150, border: '1px solid #f0883e44', borderRadius: 10, padding: '8px 10px', background: '#0f141b' }}>
+            <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>💳 Kreditschulden (gesamt)</div>
+            <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: '#f0883e' }}>{fmt(consumerDebtSum)}</div>
+          </div>
+        </div>
       </div>
 
       <div style={{ ...S.card, border: '1px solid #2563eb33' }}>
         <div style={{ ...S.row, alignItems: 'center' }}>
           <div>
             <div style={S.label}>➕ Neue Schuld</div>
-            <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2 }}>Name, Betrag, Zinsen & Rate erfassen</div>
+            <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2 }}>
+              {editingDebtId != null ? 'Schuld bearbeiten (Name, Betrag, Zinsen, Rate, Typ)' : 'Name, Betrag, Zinsen & Rate erfassen'}
+            </div>
           </div>
           <button
             type="button"
@@ -4871,7 +4926,7 @@ export default function AllWin() {
             />
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <button type="button" style={{ ...S.btn(), flex: 1, marginTop: 0 }} onClick={addDebtEntry}>
-                ✅ Schuld speichern
+                {editingDebtId != null ? '✅ Änderungen speichern' : '✅ Schuld speichern'}
               </button>
               <button
                 type="button"
@@ -4882,12 +4937,7 @@ export default function AllWin() {
                   fontWeight: 700,
                 }}
                 onClick={() => {
-                  setDebtAddOpen(false);
-                  setNewDebtName('');
-                  setNewDebtTotal('');
-                  setNewDebtInterest('');
-                  setNewDebtMonthly('');
-                  setNewDebtKind('consumer');
+                  resetDebtForm();
                 }}
               >
                 Abbrechen
@@ -4917,6 +4967,9 @@ export default function AllWin() {
               <div style={{ ...S.row, margin: '10px 0 6px' }}>
                 <span style={{ fontSize: 12, color: '#7d8590' }}>Noch offen 🎯</span>
                 <span style={{ fontWeight: 700, color: '#f0883e' }}>{fmt(d.remaining)}</span>
+              </div>
+              <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 8 }}>
+                {d.kind === 'house' ? '🏠 Hauskredit' : '💳 Kreditschuld'}
               </div>
               <Bar pct={pct} color="#f0883e" />
               <div style={{ fontSize: 11, color: '#7d8590', textAlign: 'right', marginTop: 4 }}>{Math.round(pct)}% getilgt</div>
@@ -4985,6 +5038,24 @@ export default function AllWin() {
                   onClick={() => settleDebtFull(d.id)}
                 >
                   ✅ Komplett bezahlt
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    flex: 1,
+                    minWidth: 120,
+                    background: '#1f2a3a',
+                    color: '#93c5fd',
+                    border: '1px solid #5b93ff66',
+                    borderRadius: 8,
+                    padding: '10px 12px',
+                    fontSize: 12,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => startEditDebt(d.id)}
+                >
+                  ✏️ Bearbeiten
                 </button>
               </div>
           </div>
