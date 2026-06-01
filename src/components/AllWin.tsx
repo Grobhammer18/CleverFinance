@@ -214,14 +214,27 @@ function formatTxDateLabel(dateStr: string): string {
   return dateStr;
 }
 
-/** Positiv, wenn b neuer ist als a (Datum, sonst id). */
-function compareTxRecency(a: Transaction, b: Transaction): number {
-  const ya = parseTxYearMonth(a.date);
-  const yb = parseTxYearMonth(b.date);
-  const ta = ya ? ya.year * 12 + ya.month0 : -1;
-  const tb = yb ? yb.year * 12 + yb.month0 : -1;
+/** Positiv, wenn b neuer ist als a (Kalenderdatum absteigend, bei Gleichstand id). */
+function compareTxByDateDesc(a: Transaction, b: Transaction): number {
+  const pa = parseTxDateParts(a.date);
+  const pb = parseTxDateParts(b.date);
+  const ta = pa ? pa.year * 10000 + (pa.month0 + 1) * 100 + pa.day : -1;
+  const tb = pb ? pb.year * 10000 + (pb.month0 + 1) * 100 + pb.day : -1;
   if (tb !== ta) return tb - ta;
   return b.id - a.id;
+}
+
+/** @deprecated Alias — nutzt volles Datum, nicht nur Monat. */
+function compareTxRecency(a: Transaction, b: Transaction): number {
+  return compareTxByDateDesc(a, b);
+}
+
+function moneyTxMonthKey(year: number, month0: number) {
+  return `${year}-${month0}`;
+}
+
+function moneyTxMonthLabel(year: number, month0: number) {
+  return `${MONTHS[month0]} ${String(year).slice(-2)}`;
 }
 
 /** Ausgaben-Kategorien mit Positionsliste unter Money („laufende Fixkosten“). */
@@ -381,17 +394,18 @@ function readInitialUserCache(): UserStateCache | null {
   return readUserStateCache(userIdFromAuthToken(localStorage.getItem('allwin.token')));
 }
 
+/** Cloud gewinnt bei gleicher id — verhindert, dass alter PC-Cache iPhone-Daten überschreibt. */
 function mergeTransactionsById(cloud: Transaction[], cached: Transaction[]): Transaction[] {
   const byId = new Map<number, Transaction>();
-  for (const t of cloud) byId.set(t.id, t);
   for (const t of cached) byId.set(t.id, t);
-  return [...byId.values()].sort((a, b) => b.id - a.id);
+  for (const t of cloud) byId.set(t.id, t);
+  return [...byId.values()].sort(compareTxByDateDesc);
 }
 
 function mergeDebtsById(cloud: Debt[], cached: Debt[]): Debt[] {
   const byId = new Map<number, Debt>();
-  for (const d of cloud) byId.set(d.id, d);
   for (const d of cached) byId.set(d.id, d);
+  for (const d of cloud) byId.set(d.id, d);
   return [...byId.values()];
 }
 
@@ -1525,6 +1539,8 @@ export default function AllWin() {
   const [moneyFixedCostsOpen, setMoneyFixedCostsOpen] = useState(() => !isMoneyCompactViewport());
   const [moneyVarCostsOpen, setMoneyVarCostsOpen] = useState(() => !isMoneyCompactViewport());
   const [editingTxId, setEditingTxId] = useState<number | null>(null);
+  /** Monats-Gruppen in „Letzte Buchungen“ — nur aktueller Kalendermonat standardmäßig offen. */
+  const [moneyTxOpenMonths, setMoneyTxOpenMonths] = useState<Record<string, boolean>>({});
   const vermogenSnapRef = useRef({ notgroschenBalance: 0, portfolioTotalPower: 0, totalDebt: 0 });
   const [dailyVermogenSnapshots, setDailyVermogenSnapshots] = useState<DailyVermogenSnapshot[]>(() => readGuestDailyVermogenSnapshots());
 
@@ -1611,6 +1627,36 @@ export default function AllWin() {
     [fixedCostOverviewRows],
   );
   const variableCostOverviewRows = useMemo(() => latestVarCostRows(transactions), [transactions]);
+
+  const moneyTxMonthGroups = useMemo(() => {
+    const bucket = new Map<string, { year: number; month0: number; txs: Transaction[] }>();
+    for (const tx of transactions) {
+      const p = parseTxDateParts(tx.date);
+      if (!p) continue;
+      const key = moneyTxMonthKey(p.year, p.month0);
+      if (!bucket.has(key)) bucket.set(key, { year: p.year, month0: p.month0, txs: [] });
+      bucket.get(key)!.txs.push(tx);
+    }
+    return Array.from(bucket.values())
+      .map((g) => ({ ...g, txs: [...g.txs].sort(compareTxByDateDesc) }))
+      .sort((a, b) => b.year * 12 + b.month0 - (a.year * 12 + a.month0));
+  }, [transactions]);
+
+  useEffect(() => {
+    if (moneyTxMonthGroups.length === 0) return;
+    setMoneyTxOpenMonths((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      moneyTxMonthGroups.forEach((g, i) => {
+        const key = moneyTxMonthKey(g.year, g.month0);
+        if (!(key in next)) {
+          next[key] = i === 0;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [moneyTxMonthGroups]);
   const variableCostOverviewSum = useMemo(
     () =>
       variableCostOverviewRows.reduce((s, t) => {
@@ -2109,9 +2155,16 @@ export default function AllWin() {
 
   useEffect(() => {
     if (!authToken || !authUser?.id) return;
-    const onHide = () => persistUserState();
-    window.addEventListener('pagehide', onHide);
-    return () => window.removeEventListener('pagehide', onHide);
+    const flushToCloud = () => persistUserState();
+    const onVisHide = () => {
+      if (document.visibilityState === 'hidden') flushToCloud();
+    };
+    window.addEventListener('pagehide', flushToCloud);
+    document.addEventListener('visibilitychange', onVisHide);
+    return () => {
+      window.removeEventListener('pagehide', flushToCloud);
+      document.removeEventListener('visibilitychange', onVisHide);
+    };
   }, [authToken, authUser?.id, persistUserState]);
 
   useEffect(() => {
@@ -2143,6 +2196,73 @@ export default function AllWin() {
     portfolioExcludedBaseSyms,
     dailyVermogenSnapshots,
   ]);
+
+  /** Anderes Gerät (z. B. iPhone) → beim Zurückkehren Cloud neu laden. */
+  useEffect(() => {
+    if (!authUser?.id || !authToken || !BILLING_API || !cloudUserStateReady) return;
+    let pulling = false;
+    const pullMoneyFromCloud = async () => {
+      if (pulling || document.visibilityState !== 'visible') return;
+      pulling = true;
+      try {
+        const res = await fetch(`${BILLING_API}/api/user/state`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!res.ok) return;
+        const state = (await res.json())?.state || {};
+        const cloudTx = Array.isArray(state.transactions) ? (state.transactions as Transaction[]) : [];
+        const cloudDebts = Array.isArray(state.debts) ? (state.debts as Debt[]) : [];
+        const cached = readUserStateCache(authUser.id);
+        const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : [];
+        const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : [];
+        const mergedTx = mergeTransactionsById(cloudTx, cachedTx);
+        const mergedDebts = mergeDebtsById(cloudDebts, cachedDebts);
+        flushSync(() => {
+          setTx(mergedTx);
+          setDebts(mergedDebts.map((d) => ({ ...d, kind: d.kind === 'house' ? 'house' : 'consumer' })));
+        });
+        const ng = state.notgroschen;
+        let ngB = notgroschenBalance;
+        let ngT = notgroschenTarget;
+        if (ng && typeof ng === 'object') {
+          const b = (ng as { balance?: unknown }).balance;
+          const t = (ng as { target?: unknown }).target;
+          if (typeof b === 'number' && !Number.isNaN(b)) ngB = b;
+          if (typeof t === 'number' && !Number.isNaN(t)) ngT = t;
+        }
+        const pbc = (state as { portfolioBrokerCash?: unknown }).portfolioBrokerCash;
+        const broker =
+          typeof pbc === 'number' && !Number.isNaN(pbc)
+            ? Math.max(0, pbc)
+            : typeof cached?.portfolioBrokerCash === 'number'
+              ? cached.portfolioBrokerCash
+              : portfolioBrokerCash;
+        setNotgroschenBalance(ngB);
+        setNotgroschenTarget(ngT);
+        setPortfolioBrokerCash(broker);
+        writeUserStateCache(authUser.id, {
+          transactions: mergedTx,
+          debts: mergedDebts,
+          notgroschenBalance: ngB,
+          notgroschenTarget: ngT,
+          portfolioBrokerCash: broker,
+        });
+      } catch {
+        /* offline */
+      } finally {
+        pulling = false;
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void pullMoneyFromCloud();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [authUser?.id, authToken, BILLING_API, cloudUserStateReady]);
 
   useEffect(() => {
     const applyCheckoutResult = async () => {
@@ -4009,6 +4129,48 @@ export default function AllWin() {
     );
   };
 
+  const renderMoneyTxRow = (tx: Transaction) => (
+    <div key={tx.id} style={{ ...S.txRow, alignItems: 'flex-start', gap: 8 }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{tx.category}</div>
+        <div style={{ fontSize: 11, color: '#7d8590' }}>
+          {(() => {
+            const boost = tx.linkedDebtName ? `Boost: ${tx.linkedDebtName}` : '';
+            const ng = tx.fillsNotgroschen ? 'Home: Notgroschen +' : tx.debitsNotgroschen ? 'Home: Notgroschen −' : '';
+            const cd = tx.debitsCashDepot ? 'LevelUp: Cash −' : tx.creditsCashDepot ? 'LevelUp: Cash +' : '';
+            const bits = [boost, ng, cd, tx.paymentMethod, tx.note].filter(Boolean);
+            const sub = bits.join(' · ');
+            return sub ? `${sub} · ${formatTxDateLabel(tx.date)}` : formatTxDateLabel(tx.date);
+          })()}
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
+        <div style={{ fontWeight: 700, color: tx.type === 'einnahme' ? '#2563eb' : '#ff7b7b' }}>
+          {tx.type === 'einnahme' ? '+' : '-'}
+          {fmt(+tx.amount)}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            type="button"
+            aria-label="Buchung bearbeiten"
+            onClick={() => startEditTx(tx)}
+            style={{ ...S.chip(editingTxId === tx.id), marginTop: 0, padding: '5px 10px', fontSize: 11 }}
+          >
+            ✏️
+          </button>
+          <button
+            type="button"
+            aria-label="Buchung löschen"
+            onClick={() => deleteTx(tx.id)}
+            style={{ ...S.chip(false), marginTop: 0, padding: '5px 10px', fontSize: 11, color: '#ff7b7b' }}
+          >
+            🗑️
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   const renderMoneyRecentTxList = () =>
     transactions.length > 0 ? (
       <div style={S.card}>
@@ -4040,59 +4202,55 @@ export default function AllWin() {
             Zugeklappt — antippen zum Anzeigen.
           </div>
         )}
-        {moneyTxListExpanded &&
-          transactions.slice(0, 15).map((tx) => (
-            <div key={tx.id} style={{ ...S.txRow, alignItems: 'flex-start', gap: 8 }}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{tx.category}</div>
-                <div style={{ fontSize: 11, color: '#7d8590' }}>
-                  {(() => {
-                    const boost = tx.linkedDebtName ? `Boost: ${tx.linkedDebtName}` : '';
-                    const ng = tx.fillsNotgroschen ? 'Home: Notgroschen +' : tx.debitsNotgroschen ? 'Home: Notgroschen −' : '';
-                    const cd = tx.debitsCashDepot ? 'LevelUp: Cash −' : tx.creditsCashDepot ? 'LevelUp: Cash +' : '';
-                    const bits = [boost, ng, cd, tx.paymentMethod, tx.note].filter(Boolean);
-                    const sub = bits.join(' · ');
-                    return sub ? `${sub} · ${formatTxDateLabel(tx.date)}` : formatTxDateLabel(tx.date);
-                  })()}
-                </div>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-                <div style={{ fontWeight: 700, color: tx.type === 'einnahme' ? '#2563eb' : '#ff7b7b' }}>
-                  {tx.type === 'einnahme' ? '+' : '-'}
-                  {fmt(+tx.amount)}
-                </div>
-                <div style={{ display: 'flex', gap: 6 }}>
+        {moneyTxListExpanded && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {moneyTxMonthGroups.map((group) => {
+              const key = moneyTxMonthKey(group.year, group.month0);
+              const open = moneyTxOpenMonths[key] ?? false;
+              return (
+                <div
+                  key={key}
+                  style={{
+                    borderRadius: 10,
+                    border: `1px solid ${awBg.line}`,
+                    background: awBg.hole,
+                    overflow: 'hidden',
+                  }}
+                >
                   <button
                     type="button"
-                    aria-label="Buchung bearbeiten"
-                    onClick={() => startEditTx(tx)}
+                    aria-expanded={open}
+                    onClick={() => setMoneyTxOpenMonths((prev) => ({ ...prev, [key]: !open }))}
                     style={{
-                      ...S.chip(editingTxId === tx.id),
-                      marginTop: 0,
-                      padding: '5px 10px',
-                      fontSize: 11,
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 10,
+                      padding: '10px 12px',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      textAlign: 'left',
                     }}
                   >
-                    ✏️
+                    <span style={{ fontSize: 12, fontWeight: 800, color: '#e6edf3', letterSpacing: '0.06em' }}>
+                      {moneyTxMonthLabel(group.year, group.month0)}
+                    </span>
+                    <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700 }}>
+                      {group.txs.length} {open ? '▼' : '▶'}
+                    </span>
                   </button>
-                  <button
-                    type="button"
-                    aria-label="Buchung löschen"
-                    onClick={() => deleteTx(tx.id)}
-                    style={{
-                      ...S.chip(false),
-                      marginTop: 0,
-                      padding: '5px 10px',
-                      fontSize: 11,
-                      color: '#ff7b7b',
-                    }}
-                  >
-                    🗑️
-                  </button>
+                  {open ? (
+                    <div style={{ padding: '0 10px 8px' }}>{group.txs.map((tx) => renderMoneyTxRow(tx))}</div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: '#7d8590', padding: '0 12px 10px' }}>Zugeklappt — antippen zum Anzeigen.</div>
+                  )}
                 </div>
-              </div>
-            </div>
-          ))}
+              );
+            })}
+          </div>
+        )}
       </div>
     ) : null;
 

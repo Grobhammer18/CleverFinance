@@ -341,7 +341,7 @@ app.post('/api/auth/register', (req, res) => {
   }
 
   const users = loadUsers();
-  if (users.some((u) => u.email === email)) {
+  if (users.some((u) => emailsMatchForAccountMerge(u.email, email))) {
     return res.status(400).json({ error: 'E-Mail ist bereits registriert.' });
   }
 
@@ -365,7 +365,7 @@ app.post('/api/auth/login', (req, res) => {
   const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || '');
   const users = loadUsers();
-  const user = users.find((u) => u.email === email);
+  const user = users.find((u) => emailsMatchForAccountMerge(u.email, email));
   if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
     return res.status(401).json({ error: 'Ungültige E-Mail oder Passwort.' });
   }
