@@ -123,10 +123,12 @@ function WealthKomplettTooltip({ active, payload, label }: { active?: boolean; p
   if (!row) return null;
   const rowBg = '#161b22';
   const hadDebtHere = row.schulden > 0.5;
+  const hadImmoHere = row.immobilienWert > 0.5;
   const lineSub: Array<[string, number, string]> = [
     ['Notgroschen', row.notgroschen, '#5b93ff'],
     ['Portfolio inkl. Cash', row.portfolioPlusCash, '#a855f7'],
   ];
+  if (hadImmoHere) lineSub.push(['Immobilien (Marktwert)', row.immobilienWert, '#2563eb']);
   if (hadDebtHere) lineSub.push(['Schulden (Rest)', row.schulden, '#f0883e']);
   return (
     <div
@@ -145,7 +147,11 @@ function WealthKomplettTooltip({ active, payload, label }: { active?: boolean; p
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${aw.line}` }}>
         <span style={{ width: 10, height: 10, borderRadius: 2, background: '#00d4aa', flexShrink: 0 }} />
         <span style={{ color: '#8b949e' }}>
-          {hadDebtHere ? 'Gesamt (NG + Portfolio − Schulden):' : 'Gesamt (Notgroschen + Portfolio):'}
+          {hadImmoHere
+            ? 'Gesamt (NG + Portfolio + Immobilien − Schulden):'
+            : hadDebtHere
+              ? 'Gesamt (NG + Portfolio − Schulden):'
+              : 'Gesamt (Notgroschen + Portfolio):'}
         </span>{' '}
         <strong style={{ color: '#00d4aa' }}>{EUR_FMT.format(row.saldoKomplett)}</strong>
       </div>
@@ -349,8 +355,8 @@ export default function HomeChartsSection(props: Props) {
             title="Komplette Vermögensübersicht"
             subtitle={
               isDailySnapshotSeries
-                ? 'Eine Linie: Notgroschen + Portfolio inkl. Cash − Schulden pro Tag (gespeicherte Live-Stände). Tooltip: Detail je Stichtag.'
-                : 'Eine Linie: Notgroschen + Portfolio inkl. Cash − Schulden (Rest). Über den Graphen einen Monat anfahren oder antippen — dann siehst du die Einzelteile für dieses Monatsende. Mit mehreren Kalendertagen in Folge wird die tägliche Kurve genutzt.'
+                ? 'Eine Linie: Notgroschen + Portfolio + Immobilien (Marktwert aus Boost) − Schulden pro Tag. Tooltip: Detail je Stichtag.'
+                : 'Eine Linie: Notgroschen + Portfolio + Immobilien (Marktwert Hauskredit in Boost) − Schulden. Monat anfahren für Einzelteile; ab 2 Tages-Snapshots tägliche Kurve.'
             }
           >
             <ResponsiveContainer width="100%" height={260}>
@@ -370,7 +376,7 @@ export default function HomeChartsSection(props: Props) {
                   dot={false}
                   strokeWidth={3}
                   activeDot={{ r: 5 }}
-                  name="Portfolio + Notgroschen − Schulden"
+                  name="NG + Portfolio + Immobilien − Schulden"
                   dataKey="saldoKomplett"
                   stroke="#00d4aa"
                 />

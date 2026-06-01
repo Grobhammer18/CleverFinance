@@ -1598,7 +1598,7 @@ export default function AllWin() {
   const [editingTxId, setEditingTxId] = useState<number | null>(null);
   /** Monats-Gruppen in „Letzte Buchungen“ — nur aktueller Kalendermonat standardmäßig offen. */
   const [moneyTxOpenMonths, setMoneyTxOpenMonths] = useState<Record<string, boolean>>({});
-  const vermogenSnapRef = useRef({ notgroschenBalance: 0, portfolioTotalPower: 0, totalDebt: 0 });
+  const vermogenSnapRef = useRef({ notgroschenBalance: 0, portfolioTotalPower: 0, totalDebt: 0, immobilienWert: 0 });
   const [dailyVermogenSnapshots, setDailyVermogenSnapshots] = useState<DailyVermogenSnapshot[]>(() => readGuestDailyVermogenSnapshots());
 
   const upsertDailyVermogenSnapshot = useCallback(() => {
@@ -1607,8 +1607,9 @@ export default function AllWin() {
     const ng = Math.round(r.notgroschenBalance * 100) / 100;
     const port = Math.round(r.portfolioTotalPower * 100) / 100;
     const schulden = Math.round(Math.max(0, r.totalDebt) * 100) / 100;
-    const saldoKomplett = Math.round((ng + port - schulden) * 100) / 100;
-    const row: DailyVermogenSnapshot = { date: today, notgroschen: ng, portfolioPlusCash: port, schulden, saldoKomplett };
+    const immobilienWert = Math.round(Math.max(0, r.immobilienWert) * 100) / 100;
+    const saldoKomplett = Math.round((ng + port + immobilienWert - schulden) * 100) / 100;
+    const row: DailyVermogenSnapshot = { date: today, notgroschen: ng, portfolioPlusCash: port, immobilienWert, schulden, saldoKomplett };
     setDailyVermogenSnapshots((prev) => {
       const old = prev.find((p) => p.date === row.date);
       if (
@@ -1616,6 +1617,7 @@ export default function AllWin() {
         Math.abs(old.notgroschen - row.notgroschen) < 0.51 &&
         Math.abs(old.portfolioPlusCash - row.portfolioPlusCash) < 0.51 &&
         Math.abs(old.schulden - row.schulden) < 0.51 &&
+        Math.abs((old.immobilienWert ?? 0) - (row.immobilienWert ?? 0)) < 0.51 &&
         Math.abs(old.saldoKomplett - row.saldoKomplett) < 0.51
       ) {
         return prev;
@@ -1775,7 +1777,12 @@ export default function AllWin() {
         }, 0),
     [debts],
   );
-  vermogenSnapRef.current = { notgroschenBalance, portfolioTotalPower, totalDebt };
+  vermogenSnapRef.current = {
+    notgroschenBalance,
+    portfolioTotalPower,
+    totalDebt,
+    immobilienWert: housePropertyValueTotal,
+  };
   const subEffective: SubscriptionState = DEV_FORCE_ELITE ? { ...sub, tier: 'elite' } : sub;
   const isPaidPlan = subEffective.tier !== 'free';
 
@@ -4272,7 +4279,13 @@ export default function AllWin() {
         standalonePage
         moneyYearOverview={{ reportYear, buckets: monthlyBuckets, levelUpLocked, formatMoney: fmt }}
         transactions={transactions}
-        debts={debts.map((d) => ({ id: d.id, remaining: d.remaining, total: d.total }))}
+        debts={debts.map((d) => ({
+          id: d.id,
+          remaining: d.remaining,
+          total: d.total,
+          kind: d.kind,
+          propertyValue: d.propertyValue,
+        }))}
         notgroschenBalance={notgroschenBalance}
         portfolioBrokerCash={portfolioBrokerCash}
         portfolioTrades={portfolioTrades}

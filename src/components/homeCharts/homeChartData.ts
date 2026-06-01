@@ -11,7 +11,39 @@ export type ChartTx = {
   linkedDebtId?: number;
 };
 
-export type ChartDebt = { id: number; remaining: number; total: number };
+export type ChartDebt = {
+  id: number;
+  remaining: number;
+  total: number;
+  kind?: 'consumer' | 'house';
+  propertyValue?: number;
+};
+
+/** Summe Marktwerte offener Hauskredite (Boost). */
+export function sumImmobilienMarktwert(debts: ChartDebt[]): number {
+  return (
+    Math.round(
+      debts
+        .filter((d) => d.kind === 'house' && d.remaining > 0.001)
+        .reduce((s, d) => {
+          const pv =
+            typeof d.propertyValue === 'number' && !Number.isNaN(d.propertyValue) && d.propertyValue > 0
+              ? d.propertyValue
+              : 0;
+          return s + pv;
+        }, 0) * 100,
+    ) / 100
+  );
+}
+
+export function saldoKomplettFromParts(
+  notgroschen: number,
+  portfolioPlusCash: number,
+  schulden: number,
+  immobilienWert: number,
+): number {
+  return Math.round((notgroschen + portfolioPlusCash + immobilienWert - schulden) * 100) / 100;
+}
 
 export type ChartPortfolioTrade = {
   id: string;
@@ -138,8 +170,10 @@ export type WealthLinePt = {
   label: string;
   notgroschen: number;
   portfolioPlusCash: number;
+  /** Marktwert Immobilien (Hauskredite in Boost) */
+  immobilienWert: number;
   schulden: number;
-  /** Notgroschen + Portfolio inkl. Cash − Schulden (Rest) */
+  /** Notgroschen + Portfolio + Immobilien − Schulden */
   saldoKomplett: number;
 };
 
@@ -152,6 +186,8 @@ export type DailyVermogenSnapshot = {
   date: string;
   notgroschen: number;
   portfolioPlusCash: number;
+  /** Summe Marktwert Hauskredite (optional, ältere Snapshots: 0) */
+  immobilienWert?: number;
   schulden: number;
   saldoKomplett: number;
 };
@@ -175,11 +211,12 @@ export function normalizeDailyVermogenSnapshots(raw: unknown): DailyVermogenSnap
     const notgroschen = pick('notgroschen');
     const portfolioPlusCash = pick('portfolioPlusCash');
     const schulden = pick('schulden');
+    const immobilienWert = pick('immobilienWert');
     const saldoKomplett =
       typeof o.saldoKomplett === 'number' && !Number.isNaN(o.saldoKomplett)
         ? Math.round(o.saldoKomplett * 100) / 100
-        : Math.round((notgroschen + portfolioPlusCash - schulden) * 100) / 100;
-    out.push({ date, notgroschen, portfolioPlusCash, schulden, saldoKomplett });
+        : saldoKomplettFromParts(notgroschen, portfolioPlusCash, schulden, immobilienWert);
+    out.push({ date, notgroschen, portfolioPlusCash, immobilienWert, schulden, saldoKomplett });
   }
   out.sort((a, b) => a.date.localeCompare(b.date));
   return out.slice(-MAX_DAILY_VERMOGEN_SNAPSHOTS);
@@ -238,12 +275,14 @@ export function resolveHomeChartSeries(
         'de-DE',
         y !== anchorYear ? { day: 'numeric', month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' },
       );
-      const saldo = Math.round((s.notgroschen + s.portfolioPlusCash - s.schulden) * 100) / 100;
+      const immo = s.immobilienWert ?? 0;
+      const saldo = saldoKomplettFromParts(s.notgroschen, s.portfolioPlusCash, s.schulden, immo);
       wealth.push({
         ym: s.date,
         label,
         notgroschen: s.notgroschen,
         portfolioPlusCash: s.portfolioPlusCash,
+        immobilienWert: immo,
         schulden: s.schulden,
         saldoKomplett: saldo,
       });
@@ -328,6 +367,7 @@ export function buildHomeChartSeries(
 
   /** backward debt remaining baseline per month ending */
   const debtNow = debts.reduce((s, d) => s + Math.max(0, d.remaining), 0);
+  const immobilienWertNow = sumImmobilienMarktwert(debts);
 
   const wealth: WealthLinePt[] = [];
   const portfolioOnly: SimpleLinePt[] = [];
@@ -369,6 +409,7 @@ export function buildHomeChartSeries(
       label: monthKeyLabelDe(mk),
       notgroschen: Math.round(Math.max(0, ngRunning) * 100) / 100,
       portfolioPlusCash: Math.round(portfolioPlusCash * 100) / 100,
+      immobilienWert: immobilienWertNow,
       schulden: 0,
       saldoKomplett: 0,
     });
@@ -394,7 +435,8 @@ export function buildHomeChartSeries(
   for (let i = 0; i < months.length; i++) {
     const w = wealth[i]!;
     w.schulden = Math.round(Math.max(0, debtRemain[i]?.value ?? 0) * 100) / 100;
-    w.saldoKomplett = Math.round((w.notgroschen + w.portfolioPlusCash - w.schulden) * 100) / 100;
+    w.immobilienWert = immobilienWertNow;
+    w.saldoKomplett = saldoKomplettFromParts(w.notgroschen, w.portfolioPlusCash, w.schulden, w.immobilienWert);
   }
 
   return { wealth, portfolioOnly, monthSpan: months.length };
