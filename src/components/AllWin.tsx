@@ -1447,6 +1447,8 @@ export default function AllWin() {
   const [newDebtMonthly, setNewDebtMonthly] = useState('');
   const [newDebtKind, setNewDebtKind] = useState<'consumer' | 'house'>('consumer');
   const [debtArchiveOpen, setDebtArchiveOpen] = useState(true);
+  const [boostHouseDebtsOpen, setBoostHouseDebtsOpen] = useState(true);
+  const [boostConsumerDebtsOpen, setBoostConsumerDebtsOpen] = useState(true);
   const [transactions, setTx] = useState<Transaction[]>(() =>
     Array.isArray(_bootCache?.transactions) ? _bootCache.transactions : [],
   );
@@ -4829,11 +4831,197 @@ export default function AllWin() {
 
   const renderDebts = () => {
     const activeDebts = debts.filter((d) => d.remaining > 0);
-    const houseDebtSum = activeDebts.filter((d) => d.kind === 'house').reduce((s, d) => s + d.remaining, 0);
-    const consumerDebtSum = activeDebts.filter((d) => d.kind !== 'house').reduce((s, d) => s + d.remaining, 0);
+    const sortDebtsByRemaining = (a: Debt, b: Debt) => b.remaining - a.remaining || b.id - a.id;
+    const houseDebts = activeDebts.filter((d) => d.kind === 'house').sort(sortDebtsByRemaining);
+    const consumerDebts = activeDebts.filter((d) => d.kind !== 'house').sort(sortDebtsByRemaining);
+    const houseDebtSum = houseDebts.reduce((s, d) => s + d.remaining, 0);
+    const consumerDebtSum = consumerDebts.reduce((s, d) => s + d.remaining, 0);
+    const houseMonthlySum = houseDebts.reduce((s, d) => s + d.monthly, 0);
+    const consumerMonthlySum = consumerDebts.reduce((s, d) => s + d.monthly, 0);
     const archivedDebts = debts
       .filter((d) => d.remaining <= 0)
       .sort((a, b) => (b.archivedAt || '').localeCompare(a.archivedAt || '') || b.id - a.id);
+
+    const renderActiveDebtCard = (d: Debt, groupPeers: Debt[]) => {
+      const pct = d.total > 0 ? ((d.total - d.remaining) / d.total) * 100 : 0;
+      const otherOpenInGroup = groupPeers.filter((x) => x.id !== d.id).length;
+      return (
+        <div key={d.id} style={{ ...S.debtCard, border: `1px solid ${awBg.cardBorder}`, marginBottom: 10 }}>
+          <div style={S.row}>
+            <div style={{ fontWeight: 700 }}>{d.name}</div>
+            {d.interest > 0 && (
+              <div style={{ fontSize: 11, color: '#ff7b7b', background: '#ff7b7b22', padding: '2px 8px', borderRadius: 99 }}>
+                {d.interest}% Zinsen
+              </div>
+            )}
+          </div>
+          <div style={{ ...S.row, margin: '10px 0 6px' }}>
+            <span style={{ fontSize: 12, color: '#7d8590' }}>Noch offen 🎯</span>
+            <span style={{ fontWeight: 700, color: '#f0883e' }}>{fmt(d.remaining)}</span>
+          </div>
+          <Bar pct={pct} color="#f0883e" />
+          <div style={{ fontSize: 11, color: '#7d8590', textAlign: 'right', marginTop: 4 }}>{Math.round(pct)}% getilgt</div>
+          {otherOpenInGroup > 0 && (
+            <div style={{ fontSize: 10, color: '#5b93ff', marginTop: 8, lineHeight: 1.4 }}>
+              Tipp: Wenn diese Schuld weg ist, kannst du die frei werdende Rate bei {otherOpenInGroup} weiteren Posten in dieser Gruppe anheben. ⚡
+            </div>
+          )}
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11, color: '#7d8590', marginBottom: 6 }}>Monatliche Rate (€)</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' as const }}>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={d.monthly}
+                onChange={(e) => updateDebtMonthly(d.id, e.target.value)}
+                style={{
+                  width: 100,
+                  background: awBg.hole,
+                  border: `1px solid ${awBg.line}`,
+                  borderRadius: 8,
+                  padding: '8px 10px',
+                  color: '#e6edf3',
+                  fontSize: 14,
+                  fontWeight: 700,
+                }}
+              />
+              <span style={{ fontSize: 11, color: '#7d8590' }}>pro Rate-Zahlung abgezogen</span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' as const }}>
+            <button
+              type="button"
+              style={{
+                flex: 1,
+                minWidth: 120,
+                background: '#f0883e',
+                color: '#fff',
+                border: '1px solid #ffb47a66',
+                borderRadius: 8,
+                padding: '10px 12px',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+                boxShadow: '0 6px 12px rgba(240, 136, 62, 0.28)',
+              }}
+              onClick={() => payDebt(d.id)}
+            >
+              ⚡ Rate zahlen
+            </button>
+            <button
+              type="button"
+              style={{
+                flex: 1,
+                minWidth: 120,
+                background: '#24242c',
+                color: '#93c5fd',
+                border: '1px solid #2563eb66',
+                borderRadius: 8,
+                padding: '10px 12px',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+              onClick={() => settleDebtFull(d.id)}
+            >
+              ✅ Komplett bezahlt
+            </button>
+            <button
+              type="button"
+              style={{
+                flex: 1,
+                minWidth: 120,
+                background: '#1f2a3a',
+                color: '#93c5fd',
+                border: '1px solid #5b93ff66',
+                borderRadius: 8,
+                padding: '10px 12px',
+                fontSize: 12,
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+              onClick={() => startEditDebt(d.id)}
+            >
+              ✏️ Bearbeiten
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    const renderDebtGroup = (
+      title: string,
+      groupDebts: Debt[],
+      groupSum: number,
+      monthlySum: number,
+      open: boolean,
+      onToggle: () => void,
+    ) => {
+      if (groupDebts.length === 0) return null;
+      return (
+        <div style={{ ...S.card, border: `1px solid ${awBg.line}`, background: awBg.hole }}>
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={onToggle}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 12,
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              marginBottom: open ? 10 : 0,
+              cursor: 'pointer',
+              textAlign: 'left',
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div style={S.label}>{title}</div>
+              <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
+                {groupDebts.length} {groupDebts.length === 1 ? 'Schuld' : 'Schulden'} · Restsumme{' '}
+                <strong style={{ color: '#f0883e' }}>{fmt(groupSum)}</strong>
+                {monthlySum > 0 ? (
+                  <>
+                    {' '}
+                    · Raten gesamt <strong style={{ color: '#e6edf3' }}>{fmt(monthlySum)}</strong>/Monat
+                  </>
+                ) : null}
+              </div>
+            </div>
+            <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700, flexShrink: 0 }}>{open ? '▼' : '▶'}</span>
+          </button>
+          {open ? (
+            <>
+              {groupDebts.map((d) => renderActiveDebtCard(d, groupDebts))}
+              {groupDebts.length > 1 && (
+                <div
+                  style={{
+                    marginTop: 4,
+                    paddingTop: 10,
+                    borderTop: `1px solid ${awBg.cardBorder}`,
+                    fontSize: 12,
+                    color: '#8b949e',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    flexWrap: 'wrap' as const,
+                  }}
+                >
+                  <span>Gruppensumme (noch offen)</span>
+                  <span style={{ fontWeight: 800, color: '#f0883e' }}>{fmt(groupSum)}</span>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 11, color: '#7d8590' }}>Zugeklappt — antippen zum Anzeigen.</div>
+          )}
+        </div>
+      );
+    };
 
     return (
     <div style={S.section}>
@@ -4955,112 +5143,22 @@ export default function AllWin() {
         </div>
       )}
 
-      {activeDebts.map((d) => {
-        const pct = ((d.total - d.remaining) / d.total) * 100;
-        const otherOpen = activeDebts.filter((x) => x.id !== d.id).length;
-        return (
-          <div key={d.id} style={{ ...S.debtCard, border: `1px solid ${awBg.cardBorder}` }}>
-              <div style={S.row}>
-                <div style={{ fontWeight: 700 }}>{d.name}</div>
-                {d.interest > 0 && <div style={{ fontSize: 11, color: '#ff7b7b', background: '#ff7b7b22', padding: '2px 8px', borderRadius: 99 }}>{d.interest}% Zinsen</div>}
-              </div>
-              <div style={{ ...S.row, margin: '10px 0 6px' }}>
-                <span style={{ fontSize: 12, color: '#7d8590' }}>Noch offen 🎯</span>
-                <span style={{ fontWeight: 700, color: '#f0883e' }}>{fmt(d.remaining)}</span>
-              </div>
-              <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 8 }}>
-                {d.kind === 'house' ? '🏠 Hauskredit' : '💳 Kreditschuld'}
-              </div>
-              <Bar pct={pct} color="#f0883e" />
-              <div style={{ fontSize: 11, color: '#7d8590', textAlign: 'right', marginTop: 4 }}>{Math.round(pct)}% getilgt</div>
-              {otherOpen > 0 && (
-                <div style={{ fontSize: 10, color: '#5b93ff', marginTop: 8, lineHeight: 1.4 }}>
-                  Tipp: Wenn diese Schuld weg ist, kannst du frei werdende Rate bei {otherOpen} weiteren offenen Posten anheben. ⚡
-                </div>
-              )}
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 11, color: '#7d8590', marginBottom: 6 }}>Monatliche Rate (€)</div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' as const }}>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={d.monthly}
-                    onChange={(e) => updateDebtMonthly(d.id, e.target.value)}
-                    style={{
-                      width: 100,
-                      background: awBg.hole,
-                      border: `1px solid ${awBg.line}`,
-                      borderRadius: 8,
-                      padding: '8px 10px',
-                      color: '#e6edf3',
-                      fontSize: 14,
-                      fontWeight: 700,
-                    }}
-                  />
-                  <span style={{ fontSize: 11, color: '#7d8590' }}>pro Rate-Zahlung abgezogen</span>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' as const }}>
-                <button
-                  type="button"
-                  style={{
-                    flex: 1,
-                    minWidth: 120,
-                    background: '#f0883e',
-                    color: '#fff',
-                    border: '1px solid #ffb47a66',
-                    borderRadius: 8,
-                    padding: '10px 12px',
-                    fontSize: 12,
-                    fontWeight: 800,
-                    cursor: 'pointer',
-                    boxShadow: '0 6px 12px rgba(240, 136, 62, 0.28)',
-                  }}
-                  onClick={() => payDebt(d.id)}
-                >
-                  ⚡ Rate zahlen
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    flex: 1,
-                    minWidth: 120,
-                    background: '#24242c',
-                    color: '#93c5fd',
-                    border: '1px solid #2563eb66',
-                    borderRadius: 8,
-                    padding: '10px 12px',
-                    fontSize: 12,
-                    fontWeight: 800,
-                    cursor: 'pointer',
-                  }}
-                  onClick={() => settleDebtFull(d.id)}
-                >
-                  ✅ Komplett bezahlt
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    flex: 1,
-                    minWidth: 120,
-                    background: '#1f2a3a',
-                    color: '#93c5fd',
-                    border: '1px solid #5b93ff66',
-                    borderRadius: 8,
-                    padding: '10px 12px',
-                    fontSize: 12,
-                    fontWeight: 800,
-                    cursor: 'pointer',
-                  }}
-                  onClick={() => startEditDebt(d.id)}
-                >
-                  ✏️ Bearbeiten
-                </button>
-              </div>
-          </div>
-        );
-      })}
+      {renderDebtGroup(
+        '🏠 Hauskredit',
+        houseDebts,
+        houseDebtSum,
+        houseMonthlySum,
+        boostHouseDebtsOpen,
+        () => setBoostHouseDebtsOpen((o) => !o),
+      )}
+      {renderDebtGroup(
+        '💳 Kreditschulden',
+        consumerDebts,
+        consumerDebtSum,
+        consumerMonthlySum,
+        boostConsumerDebtsOpen,
+        () => setBoostConsumerDebtsOpen((o) => !o),
+      )}
 
       {archivedDebts.length > 0 && (
         <div style={{ ...S.card, border: `1px solid ${awBg.line}`, background: awBg.hole }}>
