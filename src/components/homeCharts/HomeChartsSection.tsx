@@ -103,6 +103,7 @@ type Props = {
   marketPrices: Record<string, number>;
   fixedPie: PieSlice[];
   varPie: PieSlice[];
+  incomePie: PieSlice[];
   dailyVermogenSnapshots: DailyVermogenSnapshot[];
   /** Tab Übersicht: Jahresbalken (Money) — optional für eingebettete Übersicht. */
   moneyYearOverview?: {
@@ -414,6 +415,11 @@ export default function HomeChartsSection(props: Props) {
               paddingTop: 14,
             }}
           >
+            <PieBlock
+              title="Einnahmen nach Kategorie"
+              subtitle="Summe der letzten Beträge je Position (Gehalt, Trinkgeld, Dividende, …) — gruppiert nach Kategorie, wie unter Money."
+              slices={props.incomePie}
+            />
             <PieBlock
               title="Fixkosten (letzte Beträge je Position)"
               subtitle="Aus Abos, Miete und Kreditrate — gleiche Logik wie unter Money."
