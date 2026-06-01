@@ -447,11 +447,53 @@ function readInitialUserCache(): UserStateCache | null {
   return readUserStateCache(userIdFromAuthToken(localStorage.getItem('allwin.token')));
 }
 
-/** Cloud gewinnt bei gleicher id — verhindert, dass alter PC-Cache iPhone-Daten überschreibt. */
-function mergeTransactionsById(cloud: Transaction[], cached: Transaction[]): Transaction[] {
+function deletedTxIdsStorageKey(userId: string) {
+  return `allwin.deletedTxIds.${userId}`;
+}
+
+function readDeletedTxIds(userId: string | undefined): Set<number> {
+  if (!userId) return new Set();
+  try {
+    const raw = localStorage.getItem(deletedTxIdsStorageKey(userId));
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.map((x) => Number(x)).filter((n) => Number.isFinite(n)));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeDeletedTxIds(userId: string, ids: Set<number>) {
+  try {
+    localStorage.setItem(deletedTxIdsStorageKey(userId), JSON.stringify([...ids].slice(-800)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function markTxDeleted(userId: string | undefined, id: number) {
+  if (!userId || !Number.isFinite(id)) return;
+  const next = readDeletedTxIds(userId);
+  next.add(id);
+  writeDeletedTxIds(userId, next);
+}
+
+/** Cloud gewinnt bei Konflikt; Cache nur für noch nicht in Cloud — nie bewusst Gelöschtes. */
+function mergeTransactionsById(cloud: Transaction[], cached: Transaction[], userId?: string): Transaction[] {
+  const deleted = readDeletedTxIds(userId);
+  const cloudIds = new Set(cloud.map((t) => t.id));
+  for (const id of [...deleted]) {
+    if (!cloudIds.has(id)) deleted.delete(id);
+  }
+  if (userId) writeDeletedTxIds(userId, deleted);
+
   const byId = new Map<number, Transaction>();
-  for (const t of cached) byId.set(t.id, t);
   for (const t of cloud) byId.set(t.id, t);
+  for (const t of cached) {
+    if (byId.has(t.id) || deleted.has(t.id)) continue;
+    byId.set(t.id, t);
+  }
   return [...byId.values()].sort(compareTxByDateDesc);
 }
 
@@ -2016,7 +2058,7 @@ export default function AllWin() {
         const cached = readUserStateCache(authUser.id);
         const cloudTx = Array.isArray(state.transactions) ? (state.transactions as Transaction[]) : [];
         const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : transactions;
-        const transactionsToApply = mergeTransactionsById(cloudTx, cachedTx);
+        const transactionsToApply = mergeTransactionsById(cloudTx, cachedTx, authUser.id);
         const cloudDebts = Array.isArray(state.debts) ? (state.debts as Debt[]) : [];
         const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : debts;
         const debtsToApply = mergeDebtsById(cloudDebts, cachedDebts);
@@ -2155,7 +2197,7 @@ export default function AllWin() {
 
   const persistUserState = useCallback(
     (override?: UserStateCache, options?: { replaceTransactions?: boolean; replaceDebts?: boolean }) => {
-      if (!authToken || !authUser?.id || !BILLING_API) return;
+      if (!authToken || !authUser?.id || !BILLING_API) return Promise.resolve(false);
       const txList = override?.transactions ?? transactions;
       const debtList = override?.debts ?? debts;
       const ngB = override?.notgroschenBalance ?? notgroschenBalance;
@@ -2170,7 +2212,9 @@ export default function AllWin() {
         levelUpMode,
       });
       const hasMoneyData = txList.length > 0 || debtList.length > 0;
-      if (!cloudPersistReadyRef.current && !hasMoneyData) return;
+      if (!cloudPersistReadyRef.current && !hasMoneyData && !options?.replaceTransactions && !options?.replaceDebts) {
+        return Promise.resolve(false);
+      }
       const statePayload: Record<string, unknown> = {
         subscription: sub,
         profile: { gender: profileGender, ordenEarnedPresetIds: earnedOrdenPresetIds },
@@ -2199,7 +2243,7 @@ export default function AllWin() {
         if (onboardingV2 != null) onboardingPayload.v2 = onboardingV2;
         statePayload.onboarding = onboardingPayload;
       }
-      void fetch(`${BILLING_API}/api/user/state`, {
+      return fetch(`${BILLING_API}/api/user/state`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -2208,12 +2252,15 @@ export default function AllWin() {
         body: JSON.stringify({ state: statePayload }),
       })
         .then((res) => {
-          if (!res.ok && import.meta.env.DEV) {
-            console.warn('[cloud] PUT /api/user/state', res.status);
+          if (!res.ok) {
+            if (import.meta.env.DEV) console.warn('[cloud] PUT /api/user/state', res.status);
+            return false;
           }
+          return true;
         })
         .catch(() => {
           /* Cloud-Sync fehlgeschlagen — lokaler Cache bleibt die Quelle */
+          return false;
         });
     },
     [
@@ -2315,7 +2362,7 @@ export default function AllWin() {
         const cached = readUserStateCache(authUser.id);
         const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : [];
         const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : [];
-        const mergedTx = mergeTransactionsById(cloudTx, cachedTx);
+        const mergedTx = mergeTransactionsById(cloudTx, cachedTx, authUser.id);
         const mergedDebts = mergeDebtsById(cloudDebts, cachedDebts);
         flushSync(() => {
           setTx(mergedTx);
@@ -2752,19 +2799,20 @@ export default function AllWin() {
     });
   };
 
-  const deleteTx = (id: number) => {
+  const deleteTx = async (id: number) => {
     const tx = transactions.find((t) => t.id === id);
     if (!tx) return;
     if (!window.confirm('Diese Buchung wirklich löschen?')) return;
     const rev = reverseTxSideEffects(tx, debts, notgroschenBalance, portfolioBrokerCash);
     const nextTx = transactions.filter((t) => t.id !== id);
+    if (authUser?.id) markTxDeleted(authUser.id, id);
     flushSync(() => {
       setTx(nextTx);
       setDebts(rev.debts);
       setNotgroschenBalance(rev.notgroschenBalance);
       setPortfolioBrokerCash(rev.portfolioBrokerCash);
     });
-    persistUserState(
+    const ok = await persistUserState(
       {
         transactions: nextTx,
         debts: rev.debts,
@@ -2774,7 +2822,7 @@ export default function AllWin() {
       { replaceTransactions: true },
     );
     if (editingTxId === id) resetMoneyForm();
-    showToast('Buchung gelöscht.');
+    showToast(ok ? 'Buchung gelöscht.' : 'Lokal gelöscht — Cloud-Sync fehlgeschlagen. Bitte erneut versuchen.', ok ? 'success' : 'error');
   };
 
   const startEditTx = (tx: Transaction) => {

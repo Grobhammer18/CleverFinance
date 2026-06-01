@@ -152,13 +152,17 @@ function ensureOnboardingDoneInState(state) {
 }
 
 /** Race nach Refresh: leere Arrays aus dem Client dürfen bestehende Daten nicht löschen. */
-function stripEmptyOverwrites(prevState, incoming) {
+function stripEmptyOverwrites(prevState, incoming, opts = {}) {
+  const replaceTransactions = opts.replaceTransactions === true;
+  const replaceDebts = opts.replaceDebts === true;
   const next = { ...incoming };
   const arrayKeys = ['transactions', 'debts', 'portfolioTrades', 'dailyVermogenSnapshots'];
   for (const key of arrayKeys) {
     const inc = incoming[key];
     const prev = prevState[key];
     if (Array.isArray(inc) && inc.length === 0 && Array.isArray(prev) && prev.length > 0) {
+      if (key === 'transactions' && replaceTransactions) continue;
+      if (key === 'debts' && replaceDebts) continue;
       delete next[key];
     }
   }
@@ -507,9 +511,10 @@ app.put('/api/user/state', (req, res) => {
   const index = users.findIndex((u) => u.id === payload.userId);
   if (index < 0) return res.status(401).json({ error: 'Unauthorized' });
   const prevState = users[index].state || {};
-  const incoming = stripEmptyOverwrites(prevState, req.body?.state || {});
-  const replaceTransactions = incoming._replaceTransactions === true;
-  const replaceDebts = incoming._replaceDebts === true;
+  const rawIncoming = req.body?.state || {};
+  const replaceTransactions = rawIncoming._replaceTransactions === true;
+  const replaceDebts = rawIncoming._replaceDebts === true;
+  const incoming = stripEmptyOverwrites(prevState, rawIncoming, { replaceTransactions, replaceDebts });
   delete incoming._replaceTransactions;
   delete incoming._replaceDebts;
   if (!replaceTransactions && Array.isArray(prevState.transactions) && Array.isArray(incoming.transactions) && incoming.transactions.length > 0) {
