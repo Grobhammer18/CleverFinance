@@ -351,6 +351,38 @@ function writeUserStateCache(userId: string | undefined, patch: UserStateCache) 
   }
 }
 
+function userIdFromAuthToken(token: string | null | undefined): string | undefined {
+  if (!token?.includes('.')) return undefined;
+  try {
+    const body = token.split('.')[0];
+    const pad = body.length % 4 === 0 ? '' : '='.repeat(4 - (body.length % 4));
+    const json = atob(body.replace(/-/g, '+').replace(/_/g, '/') + pad);
+    const payload = JSON.parse(json) as { userId?: string };
+    return typeof payload.userId === 'string' ? payload.userId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readInitialUserCache(): UserStateCache | null {
+  if (typeof window === 'undefined') return null;
+  return readUserStateCache(userIdFromAuthToken(localStorage.getItem('allwin.token')));
+}
+
+function mergeTransactionsById(cloud: Transaction[], cached: Transaction[]): Transaction[] {
+  const byId = new Map<number, Transaction>();
+  for (const t of cloud) byId.set(t.id, t);
+  for (const t of cached) byId.set(t.id, t);
+  return [...byId.values()].sort((a, b) => b.id - a.id);
+}
+
+function mergeDebtsById(cloud: Debt[], cached: Debt[]): Debt[] {
+  const byId = new Map<number, Debt>();
+  for (const d of cloud) byId.set(d.id, d);
+  for (const d of cached) byId.set(d.id, d);
+  return [...byId.values()];
+}
+
 type ToastState = {
   msg: string;
   type: 'success' | 'error' | 'level';
@@ -1277,7 +1309,12 @@ export default function AllWin() {
   const APPLE_CLIENT_ID = (import.meta as any).env?.VITE_APPLE_CLIENT_ID || '';
   const APPLE_REDIRECT_URI = (import.meta as any).env?.VITE_APPLE_REDIRECT_URI || window.location.origin;
   const [tab, setTab] = useState(() => parseAllwinTabHash() ?? 'dashboard');
-  const [debts, setDebts] = useState<Debt[]>([]);
+  const _bootCache = readInitialUserCache();
+  const [debts, setDebts] = useState<Debt[]>(() =>
+    Array.isArray(_bootCache?.debts)
+      ? _bootCache.debts.map((d) => ({ ...d, kind: d.kind === 'house' ? 'house' : 'consumer' }))
+      : [],
+  );
   const [debtAddOpen, setDebtAddOpen] = useState(false);
   const [newDebtName, setNewDebtName] = useState('');
   const [newDebtTotal, setNewDebtTotal] = useState('');
@@ -1285,7 +1322,9 @@ export default function AllWin() {
   const [newDebtMonthly, setNewDebtMonthly] = useState('');
   const [newDebtKind, setNewDebtKind] = useState<'consumer' | 'house'>('consumer');
   const [debtArchiveOpen, setDebtArchiveOpen] = useState(true);
-  const [transactions, setTx] = useState<Transaction[]>([]);
+  const [transactions, setTx] = useState<Transaction[]>(() =>
+    Array.isArray(_bootCache?.transactions) ? _bootCache.transactions : [],
+  );
   const [form, setForm] = useState<FormState>({
     type: 'ausgabe',
     amount: '',
@@ -1321,7 +1360,9 @@ export default function AllWin() {
   const portfolioAlloc = valueWeightsFromShares(portfolioShares, tradableMarket);
   const [portfolioTrades, setPortfolioTrades] = useState<PortfolioTrade[]>([]);
   /** Bargeld auf dem Brokerkonto, noch nicht in Positionen investiert (manuell, wird mit Profil gespeichert). */
-  const [portfolioBrokerCash, setPortfolioBrokerCash] = useState(0);
+  const [portfolioBrokerCash, setPortfolioBrokerCash] = useState(() =>
+    typeof _bootCache?.portfolioBrokerCash === 'number' ? Math.max(0, _bootCache.portfolioBrokerCash) : 0,
+  );
   /** Portfolio Power in der UI: investierter Wert + Cash Depot. */
   const portfolioTotalPower = Math.round((portfolioValue + portfolioBrokerCash) * 100) / 100;
   const [levelUpPortfolioOpen, setLevelUpPortfolioOpen] = useState(true);
@@ -1370,8 +1411,12 @@ export default function AllWin() {
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [onboardingV2, setOnboardingV2] = useState<OnboardingV2Payload | null>(null);
   const [levelUpMode, setLevelUpMode] = useState<LevelUpMode>('full');
-  const [notgroschenBalance, setNotgroschenBalance] = useState(0);
-  const [notgroschenTarget, setNotgroschenTarget] = useState(0);
+  const [notgroschenBalance, setNotgroschenBalance] = useState(() =>
+    typeof _bootCache?.notgroschenBalance === 'number' ? _bootCache.notgroschenBalance : 0,
+  );
+  const [notgroschenTarget, setNotgroschenTarget] = useState(() =>
+    typeof _bootCache?.notgroschenTarget === 'number' ? _bootCache.notgroschenTarget : 0,
+  );
   const [notgroschenHomeMenuOpen, setNotgroschenHomeMenuOpen] = useState(false);
   const [notgroschenHomeEditing, setNotgroschenHomeEditing] = useState(false);
   const [notgroschenHomeDraft, setNotgroschenHomeDraft] = useState('');
@@ -1750,11 +1795,11 @@ export default function AllWin() {
         const state = data?.state || {};
         const cached = readUserStateCache(authUser.id);
         const cloudTx = Array.isArray(state.transactions) ? (state.transactions as Transaction[]) : [];
-        const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : [];
-        const transactionsToApply = cloudTx.length > 0 ? cloudTx : cachedTx;
+        const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : transactions;
+        const transactionsToApply = mergeTransactionsById(cloudTx, cachedTx);
         const cloudDebts = Array.isArray(state.debts) ? (state.debts as Debt[]) : [];
-        const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : [];
-        const debtsToApply = cloudDebts.length > 0 ? cloudDebts : cachedDebts;
+        const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : debts;
+        const debtsToApply = mergeDebtsById(cloudDebts, cachedDebts);
         let ngBal = notgroschenBalance;
         let ngTarget = notgroschenTarget;
         let brokerCash = portfolioBrokerCash;
@@ -1882,7 +1927,7 @@ export default function AllWin() {
       }
     };
     void loadUserState();
-  }, [BILLING_API, authToken, authUser]);
+  }, [BILLING_API, authToken, authUser?.id]);
 
   const persistUserState = useCallback(
     (override?: UserStateCache) => {
@@ -1899,10 +1944,9 @@ export default function AllWin() {
         notgroschenTarget: ngT,
         portfolioBrokerCash: broker,
       });
-      if (!cloudPersistReadyRef.current) return;
+      const hasMoneyData = txList.length > 0 || debtList.length > 0;
+      if (!cloudPersistReadyRef.current && !hasMoneyData) return;
       const statePayload: Record<string, unknown> = {
-        debts: debtList,
-        transactions: txList,
         subscription: sub,
         profile: { gender: profileGender, ordenEarnedPresetIds: earnedOrdenPresetIds },
         notgroschen: { balance: ngB, target: ngT },
@@ -1916,6 +1960,8 @@ export default function AllWin() {
         portfolioExcludedBaseSyms,
         dailyVermogenSnapshots,
       };
+      if (debtList.length > 0) statePayload.debts = debtList;
+      if (txList.length > 0) statePayload.transactions = txList;
       if (cloudOnboardingHydratedRef.current) {
         const persistDone =
           onboardingDone ||
@@ -1930,6 +1976,8 @@ export default function AllWin() {
           Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({ state: statePayload }),
+      }).catch(() => {
+        /* Cloud-Sync fehlgeschlagen — lokaler Cache bleibt die Quelle */
       });
     },
     [
@@ -1955,6 +2003,24 @@ export default function AllWin() {
       onboardingV2,
     ],
   );
+
+  useEffect(() => {
+    if (!authUser?.id) return;
+    writeUserStateCache(authUser.id, {
+      transactions,
+      debts,
+      notgroschenBalance,
+      notgroschenTarget,
+      portfolioBrokerCash,
+    });
+  }, [authUser?.id, transactions, debts, notgroschenBalance, notgroschenTarget, portfolioBrokerCash]);
+
+  useEffect(() => {
+    if (!authToken || !authUser?.id) return;
+    const onHide = () => persistUserState();
+    window.addEventListener('pagehide', onHide);
+    return () => window.removeEventListener('pagehide', onHide);
+  }, [authToken, authUser?.id, persistUserState]);
 
   useEffect(() => {
     if (!authUser || !authToken || isHydrating || !cloudUserStateReady || !cloudPersistReadyRef.current) return;
