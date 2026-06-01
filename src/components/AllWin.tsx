@@ -2,7 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { flushSync } from 'react-dom';
 import OnboardingWizard from './OnboardingWizard';
 import type { LevelUpMode, OnboardingV2Payload } from '../onboarding/onboardingLogic';
-import { notgroschenTargetFromIncome, sharesFromOnboardingInvest } from '../onboarding/onboardingLogic';
+import {
+  notgroschenTargetFromIncome,
+  resolveLevelUpMode,
+  sharesFromOnboardingInvest,
+} from '../onboarding/onboardingLogic';
 import { APP_TOUR_STEPS, APP_TOUR_STORAGE_KEY } from '../onboarding/appGuideContent';
 import AppGuideTour from './AppGuideTour';
 import CleverFinanceLogo from './CleverFinanceLogo';
@@ -320,6 +324,7 @@ type UserStateCache = {
   notgroschenBalance?: number;
   notgroschenTarget?: number;
   portfolioBrokerCash?: number;
+  levelUpMode?: LevelUpMode;
   savedAt?: number;
 };
 
@@ -1410,7 +1415,11 @@ export default function AllWin() {
   const [authGate, setAuthGate] = useState<'welcome' | 'auth'>('welcome');
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [onboardingV2, setOnboardingV2] = useState<OnboardingV2Payload | null>(null);
-  const [levelUpMode, setLevelUpMode] = useState<LevelUpMode>('full');
+  const [levelUpMode, setLevelUpMode] = useState<LevelUpMode>(() => {
+    const cached = _bootCache?.levelUpMode;
+    const bootDebts = _bootCache?.debts ?? [];
+    return resolveLevelUpMode({ fromCache: cached, debts: bootDebts });
+  });
   const [notgroschenBalance, setNotgroschenBalance] = useState(() =>
     typeof _bootCache?.notgroschenBalance === 'number' ? _bootCache.notgroschenBalance : 0,
   );
@@ -1504,6 +1513,9 @@ export default function AllWin() {
         if (typeof cached.portfolioBrokerCash === 'number' && !Number.isNaN(cached.portfolioBrokerCash)) {
           setPortfolioBrokerCash(Math.max(0, cached.portfolioBrokerCash));
         }
+        if (cached.levelUpMode) {
+          setLevelUpMode(resolveLevelUpMode({ fromCache: cached.levelUpMode, debts: cached.debts ?? [] }));
+        }
       });
     }
   }, [authUser?.id, authUser?.email, authToken]);
@@ -1569,6 +1581,7 @@ export default function AllWin() {
   const isPaidPlan = subEffective.tier !== 'free';
 
   const levelUpLocked = useMemo(() => {
+    if (authUser && authToken && !cloudUserStateReady) return true;
     if (levelUpMode === 'full') return false;
     if (levelUpMode === 'until_all_debts') {
       return debts.some((d) => d.remaining > 0);
@@ -1578,7 +1591,7 @@ export default function AllWin() {
       return notgroschenBalance < t * 0.5;
     }
     return false;
-  }, [levelUpMode, debts, notgroschenBalance, notgroschenTarget]);
+  }, [authUser, authToken, cloudUserStateReady, levelUpMode, debts, notgroschenBalance, notgroschenTarget]);
 
   useEffect(() => {
     const allPaid = debts.length > 0 && debts.every((d) => d.remaining <= 0);
@@ -1806,13 +1819,14 @@ export default function AllWin() {
         if (state.subscription?.tier && state.subscription?.cycle) setSub(state.subscription);
         if (state.notifications) setNotifSettings(state.notifications);
         const ob = state.onboarding;
-        if (ob?.v2 && typeof ob.v2 === 'object') {
-          setOnboardingV2(ob.v2 as OnboardingV2Payload);
-          const m = (ob.v2 as OnboardingV2Payload).levelUpMode;
-          if (m === 'until_all_debts' || m === 'until_emergency_half' || m === 'full') setLevelUpMode(m);
-        } else {
-          setOnboardingV2(null);
-        }
+        const v2 = ob?.v2 && typeof ob.v2 === 'object' ? (ob.v2 as OnboardingV2Payload) : null;
+        const serverMode = (state as { levelUpMode?: unknown }).levelUpMode;
+        const resolvedMode = resolveLevelUpMode({
+          fromV2: v2?.levelUpMode,
+          fromServer: serverMode as LevelUpMode | null,
+          fromCache: cached?.levelUpMode,
+          debts: debtsToApply,
+        });
         const done = resolveOnboardingDoneFromCloud(ob, authUser.id, authUser.email, state);
         const hasV2 = ob?.v2 != null && typeof ob.v2 === 'object';
         const obDoneFlag = ob?.done === true || ob?.done === 'true' || ob?.done === 1;
@@ -1896,6 +1910,8 @@ export default function AllWin() {
           ordenLoad = normalizeEarnedOrdenOnLoad(pr.ordenEarnedPresetIds, pr.manualOrden);
         }
         flushSync(() => {
+          setOnboardingV2(v2);
+          setLevelUpMode(resolvedMode);
           setDebts(
             debtsToApply.map((d) => ({
               ...d,
@@ -1916,6 +1932,7 @@ export default function AllWin() {
           notgroschenBalance: ngBal,
           notgroschenTarget: ngTarget,
           portfolioBrokerCash: brokerCash,
+          levelUpMode: resolvedMode,
         });
         cloudOnboardingHydratedRef.current = true;
         window.setTimeout(() => {
@@ -1943,6 +1960,7 @@ export default function AllWin() {
         notgroschenBalance: ngB,
         notgroschenTarget: ngT,
         portfolioBrokerCash: broker,
+        levelUpMode,
       });
       const hasMoneyData = txList.length > 0 || debtList.length > 0;
       if (!cloudPersistReadyRef.current && !hasMoneyData) return;
@@ -1962,12 +1980,15 @@ export default function AllWin() {
       };
       if (debtList.length > 0) statePayload.debts = debtList;
       if (txList.length > 0) statePayload.transactions = txList;
+      statePayload.levelUpMode = levelUpMode;
       if (cloudOnboardingHydratedRef.current) {
         const persistDone =
           onboardingDone ||
           readLocalOnboardingDone(authUser.id, authUser.email) ||
           (onboardingV2 != null && typeof onboardingV2 === 'object');
-        statePayload.onboarding = { done: persistDone, v2: onboardingV2 };
+        const onboardingPayload: { done: boolean; v2?: OnboardingV2Payload } = { done: persistDone };
+        if (onboardingV2 != null) onboardingPayload.v2 = onboardingV2;
+        statePayload.onboarding = onboardingPayload;
       }
       void fetch(`${BILLING_API}/api/user/state`, {
         method: 'PUT',
@@ -2001,6 +2022,7 @@ export default function AllWin() {
       dailyVermogenSnapshots,
       onboardingDone,
       onboardingV2,
+      levelUpMode,
     ],
   );
 
@@ -2012,8 +2034,9 @@ export default function AllWin() {
       notgroschenBalance,
       notgroschenTarget,
       portfolioBrokerCash,
+      levelUpMode,
     });
-  }, [authUser?.id, transactions, debts, notgroschenBalance, notgroschenTarget, portfolioBrokerCash]);
+  }, [authUser?.id, transactions, debts, notgroschenBalance, notgroschenTarget, portfolioBrokerCash, levelUpMode]);
 
   useEffect(() => {
     if (!authToken || !authUser?.id) return;

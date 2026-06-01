@@ -498,7 +498,9 @@ app.put('/api/user/state', (req, res) => {
     // Race nach Login: done nicht versehentlich auf false — außer explizit „Onboarding erneut“
     if (wasComplete && incOb.done === false && incOb.reset !== true) {
       mergedOb.done = true;
-      if (hadV2 && (incOb.v2 == null || incOb.v2 === undefined)) mergedOb.v2 = prevOb.v2;
+    }
+    if (hadV2 && (incOb.v2 == null || incOb.v2 === undefined) && incOb.reset !== true) {
+      mergedOb.v2 = prevOb.v2;
     }
     if (incOb.reset === true) delete mergedOb.reset;
     nextState = { ...nextState, onboarding: mergedOb };

@@ -65,6 +65,25 @@ export type OnboardingV2Payload = {
   whyHere: string[];
 };
 
+function isLevelUpMode(m: unknown): m is LevelUpMode {
+  return m === 'full' || m === 'until_all_debts' || m === 'until_emergency_half';
+}
+
+/** LevelUp-Modus nach Reload: v2/Server/Cache, sonst bei offenen Schulden konservativ sperren. */
+export function resolveLevelUpMode(args: {
+  fromV2?: LevelUpMode | null;
+  fromServer?: LevelUpMode | null;
+  fromCache?: LevelUpMode | null;
+  debts: { remaining: number }[];
+}): LevelUpMode {
+  const { fromV2, fromServer, fromCache, debts } = args;
+  if (isLevelUpMode(fromV2)) return fromV2;
+  if (isLevelUpMode(fromServer)) return fromServer;
+  if (isLevelUpMode(fromCache)) return fromCache;
+  if (debts.some((d) => d.remaining > 0)) return 'until_all_debts';
+  return 'full';
+}
+
 export function computeBranch(args: {
   hasDebt: boolean;
   debtKinds: { consumer: boolean; house: boolean };
