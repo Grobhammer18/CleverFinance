@@ -51,45 +51,102 @@ Bis zum Start soll die App unter einer **öffentlichen URL** erreichbar sein —
 
 ## Terminal (lokal & Deploy)
 
-Projektordner:
+Kurzreferenz zum Kopieren ins Terminal. Live-App: [clever-finance.vercel.app](https://clever-finance.vercel.app) · API: `https://cleverfinance-production.up.railway.app`
+
+### Projekt öffnen
 
 ```bash
 cd /Users/alwinruf/Downloads/All-Win-main
 ```
 
-**Nach GitHub-Änderungen (z. B. von Cursor) — lokal aktualisieren:**
+### Repo aktualisieren (nach Push von Cursor / anderem Rechner)
 
 ```bash
 git pull origin main
+git log -3 --oneline
 ```
 
-**Lokal testen (zwei Terminals):**
+### Lokal entwickeln — **zwei Terminals**
+
+| Terminal | Befehl | Zweck |
+|----------|--------|--------|
+| **1** | `npm run dev:billing` | API Port **4242** (Login, `GET/PUT /api/user/state`) |
+| **2** | `npm run dev` | App Port **3000** |
 
 ```bash
-# Terminal 1 — API (Auth + Cloud-Sync)
+# Terminal 1
 npm run dev:billing
 
-# Terminal 2 — App
+# Terminal 2 (neues Fenster)
 npm run dev
 ```
 
-→ [http://localhost:3000](http://localhost:3000) · Billing: [http://localhost:4242/api/health](http://localhost:4242/api/health)
+- App: [http://localhost:3000](http://localhost:3000) · Money: [http://localhost:3000/#money](http://localhost:3000/#money) · Übersicht: [http://localhost:3000/#charts](http://localhost:3000/#charts)
+- API-Health: `curl -s http://localhost:4242/api/health`
 
-**Änderungen live (Vercel + Railway deployen automatisch):**
+Ohne Terminal 1: Login/Sync lokal nicht vollständig testbar.
+
+### Build prüfen (vor Push)
 
 ```bash
-git add src/components/AllWin.tsx server/billingServer.js
-git commit -m "kurze Beschreibung"
+npm run lint
+npm run build
+```
+
+### Änderungen live schicken (Vercel + Railway bauen automatisch)
+
+```bash
+git status
+git add src/components/AllWin.tsx src/components/homeCharts/HomeChartsSection.tsx server/billingServer.js docs/
+git commit -m "kurze Beschreibung auf Deutsch"
 git push origin main
 ```
 
-**API / Cloud-Sync prüfen (Production):**
+Nur App-UI:
 
 ```bash
-curl -s https://cleverfinance-production.up.railway.app/api/health
+git add src/components/AllWin.tsx src/components/homeCharts/
+git commit -m "feat: …"
+git push origin main
 ```
 
-Stand **28.05.2026:** Cloud-Speichern (`PUT /api/user/state`) braucht CORS-Methode `PUT` auf Railway — Commit `a1a9edd`. Nach Deploy: iPhone App öffnen → kurz warten → App schließen → am PC unter [clever-finance.vercel.app](https://clever-finance.vercel.app) mit **E-Mail + Passwort** anmelden.
+Nur API:
+
+```bash
+git add server/billingServer.js
+git commit -m "fix: …"
+git push origin main
+```
+
+### Production prüfen
+
+```bash
+# API läuft?
+curl -s https://cleverfinance-production.up.railway.app/api/health
+
+# Letzter Stand auf GitHub
+git fetch origin && git log origin/main -1 --oneline
+```
+
+**Cloud-Sync (iPhone ↔ PC, E-Mail + Passwort):** Nach Deploy Railway (`a1a9edd`+): iPhone App öffnen → 5–10 s warten → App schließen → am PC anmelden. Speichern braucht CORS **`PUT`** auf der API.
+
+### App-Stand (Commits, Mai 2026)
+
+| Commit | Inhalt |
+|--------|--------|
+| `94dc2b0` | Money: Block **Einnahmen**; Übersicht: Kreis **Einnahmen nach Kategorie** |
+| `a1a9edd` | **CORS PUT** — Cloud-Sync von Vercel |
+| `19c89b1` | **Letzte Buchungen**: nach Monat/Datum, ältere Monate zugeklappt |
+| `aae9637` | Buchungsdatum korrekt (nicht immer der 15.) |
+| `832c289` | Buchungen bearbeiten/löschen |
+
+### Lokal schnell testen (Money + Übersicht)
+
+1. `npm run dev:billing` + `npm run dev`
+2. Registrieren/Login
+3. **Money** → Einnahme speichern → Abschnitt **„Einnahmen“** prüfen
+4. Tab **Übersicht** → Donut **„Einnahmen nach Kategorie“**
+5. Tab schließen / `git pull` auf zweitem Rechner → gleiche E-Mail → Daten da?
 
 ---
 
