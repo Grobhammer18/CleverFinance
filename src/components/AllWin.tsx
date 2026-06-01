@@ -41,7 +41,7 @@ const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 
 
 const CATS = {
   einnahmen: ['Gehalt', 'Trinkgeld', 'Gutschrift', 'Geschenk', 'Dividende', 'Freelance', 'Nebenjob', 'Sonstiges'],
-  ausgaben: ['Essen & Trinken', 'Fahrtkosten', 'Abos', 'Kreditrate', 'Notgroschen', 'Miete', 'Kleidung', 'Gesundheit', 'Freizeit', 'Sonstiges'],
+  ausgaben: ['Essen & Trinken', 'Fahrtkosten', 'Abos', 'Kreditrate', 'Notgroschen', 'Miete', 'Kleidung', 'Gesundheit', 'Freizeit', 'Geschenk', 'Sonstiges'],
 };
 
 const PAYMENT_METHOD_OPTIONS = ['', 'Bar', 'Kreditkarte', 'Überweisung', 'Lastschrift', 'PayPal', 'Cash Depot', 'Einzahlung Cash Depot', 'Notgroschen', 'Sonstiges'] as const;
@@ -284,6 +284,7 @@ const VAR_KOST_CATEGORIES = new Set([
   'Kleidung',
   'Gesundheit',
   'Freizeit',
+  'Geschenk',
   'Sonstiges',
 ]);
 
@@ -2153,7 +2154,7 @@ export default function AllWin() {
   }, [BILLING_API, authToken, authUser?.id]);
 
   const persistUserState = useCallback(
-    (override?: UserStateCache) => {
+    (override?: UserStateCache, options?: { replaceTransactions?: boolean; replaceDebts?: boolean }) => {
       if (!authToken || !authUser?.id || !BILLING_API) return;
       const txList = override?.transactions ?? transactions;
       const debtList = override?.debts ?? debts;
@@ -2184,8 +2185,10 @@ export default function AllWin() {
         portfolioExcludedBaseSyms,
         dailyVermogenSnapshots,
       };
-      if (debtList.length > 0) statePayload.debts = debtList;
-      if (txList.length > 0) statePayload.transactions = txList;
+      if (debtList.length > 0 || options?.replaceDebts) statePayload.debts = debtList;
+      if (txList.length > 0 || options?.replaceTransactions) statePayload.transactions = txList;
+      if (options?.replaceTransactions) statePayload._replaceTransactions = true;
+      if (options?.replaceDebts) statePayload._replaceDebts = true;
       statePayload.levelUpMode = levelUpMode;
       if (cloudOnboardingHydratedRef.current) {
         const persistDone =
@@ -2761,12 +2764,15 @@ export default function AllWin() {
       setNotgroschenBalance(rev.notgroschenBalance);
       setPortfolioBrokerCash(rev.portfolioBrokerCash);
     });
-    persistUserState({
-      transactions: nextTx,
-      debts: rev.debts,
-      notgroschenBalance: rev.notgroschenBalance,
-      portfolioBrokerCash: rev.portfolioBrokerCash,
-    });
+    persistUserState(
+      {
+        transactions: nextTx,
+        debts: rev.debts,
+        notgroschenBalance: rev.notgroschenBalance,
+        portfolioBrokerCash: rev.portfolioBrokerCash,
+      },
+      { replaceTransactions: true },
+    );
     if (editingTxId === id) resetMoneyForm();
     showToast('Buchung gelöscht.');
   };

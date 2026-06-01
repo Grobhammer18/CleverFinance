@@ -508,10 +508,14 @@ app.put('/api/user/state', (req, res) => {
   if (index < 0) return res.status(401).json({ error: 'Unauthorized' });
   const prevState = users[index].state || {};
   const incoming = stripEmptyOverwrites(prevState, req.body?.state || {});
-  if (Array.isArray(prevState.transactions) && Array.isArray(incoming.transactions) && incoming.transactions.length > 0) {
+  const replaceTransactions = incoming._replaceTransactions === true;
+  const replaceDebts = incoming._replaceDebts === true;
+  delete incoming._replaceTransactions;
+  delete incoming._replaceDebts;
+  if (!replaceTransactions && Array.isArray(prevState.transactions) && Array.isArray(incoming.transactions) && incoming.transactions.length > 0) {
     incoming.transactions = mergeByNumericIdKeepMissing(prevState.transactions, incoming.transactions);
   }
-  if (Array.isArray(prevState.debts) && Array.isArray(incoming.debts) && incoming.debts.length > 0) {
+  if (!replaceDebts && Array.isArray(prevState.debts) && Array.isArray(incoming.debts) && incoming.debts.length > 0) {
     incoming.debts = mergeByNumericIdKeepMissing(prevState.debts, incoming.debts);
   }
   const prevOb = prevState.onboarding || {};
