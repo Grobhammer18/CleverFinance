@@ -151,6 +151,32 @@ function ensureOnboardingDoneInState(state) {
   return { ...state, onboarding: { ...ob, done: true } };
 }
 
+/** Race nach Refresh: leere Arrays aus dem Client dürfen bestehende Daten nicht löschen. */
+function stripEmptyOverwrites(prevState, incoming) {
+  const next = { ...incoming };
+  const arrayKeys = ['transactions', 'debts', 'portfolioTrades', 'dailyVermogenSnapshots'];
+  for (const key of arrayKeys) {
+    const inc = incoming[key];
+    const prev = prevState[key];
+    if (Array.isArray(inc) && inc.length === 0 && Array.isArray(prev) && prev.length > 0) {
+      delete next[key];
+    }
+  }
+  const incPs = incoming.portfolioShares;
+  const prevPs = prevState.portfolioShares;
+  if (
+    incPs &&
+    typeof incPs === 'object' &&
+    Object.keys(incPs).length === 0 &&
+    prevPs &&
+    typeof prevPs === 'object' &&
+    Object.keys(prevPs).length > 0
+  ) {
+    delete next.portfolioShares;
+  }
+  return next;
+}
+
 function upsertOauthUser({ provider, providerId, email, name }) {
   const users = loadUsers();
   const pid = String(providerId || '');
@@ -458,7 +484,7 @@ app.put('/api/user/state', (req, res) => {
   const index = users.findIndex((u) => u.id === payload.userId);
   if (index < 0) return res.status(401).json({ error: 'Unauthorized' });
   const prevState = users[index].state || {};
-  const incoming = req.body?.state || {};
+  const incoming = stripEmptyOverwrites(prevState, req.body?.state || {});
   const prevOb = prevState.onboarding || {};
   const incOb = incoming.onboarding;
   let nextState = { ...prevState, ...incoming };

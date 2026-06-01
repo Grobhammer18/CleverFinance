@@ -36,7 +36,7 @@ const fmtStk = (n: number) =>
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
 const CATS = {
-  einnahmen: ['Gehalt', 'Dividende', 'Freelance', 'Nebenjob', 'Sonstiges'],
+  einnahmen: ['Gehalt', 'Trinkgeld', 'Dividende', 'Freelance', 'Nebenjob', 'Sonstiges'],
   ausgaben: ['Essen & Trinken', 'Fahrtkosten', 'Abos', 'Kreditrate', 'Notgroschen', 'Miete', 'Kleidung', 'Gesundheit', 'Freizeit', 'Sonstiges'],
 };
 
@@ -298,11 +298,16 @@ type Debt = {
   archivedAt?: string;
 };
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 type FormState = {
   type: 'einnahme' | 'ausgabe';
   amount: string;
   category: string;
   note: string;
+  date: string;
   paymentMethod: string;
   /** leer oder Debt-ID als String */
   linkedDebtId: string;
@@ -1243,7 +1248,15 @@ export default function AllWin() {
   const [newDebtKind, setNewDebtKind] = useState<'consumer' | 'house'>('consumer');
   const [debtArchiveOpen, setDebtArchiveOpen] = useState(true);
   const [transactions, setTx] = useState<Transaction[]>([]);
-  const [form, setForm] = useState<FormState>({ type: 'ausgabe', amount: '', category: CATS.ausgaben[0], note: '', paymentMethod: '', linkedDebtId: '' });
+  const [form, setForm] = useState<FormState>({
+    type: 'ausgabe',
+    amount: '',
+    category: CATS.ausgaben[0],
+    note: '',
+    date: todayIsoDate(),
+    paymentMethod: '',
+    linkedDebtId: '',
+  });
   const [toast, setToast] = useState<ToastState>(null);
   const [market, setMarket] = useState<MarketItem[]>(() => mergedWatchlistFromExtras(readWatchlistExtrasFromLocal()));
   const [watchlistExtras, setWatchlistExtras] = useState<WatchlistExtraPersist[]>(() => readWatchlistExtrasFromLocal());
@@ -1312,6 +1325,8 @@ export default function AllWin() {
   const [cloudUserStateReady, setCloudUserStateReady] = useState(false);
   /** Verhindert PUT mit onboarding.done=false bevor GET die Cloud-Daten angewendet hat. */
   const cloudOnboardingHydratedRef = useRef(false);
+  /** Verhindert PUT mit leerem State bevor GET erfolgreich geladen wurde (Refresh-Bug). */
+  const cloudPersistReadyRef = useRef(false);
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
   const [authGate, setAuthGate] = useState<'welcome' | 'auth'>('welcome');
   const [onboardingDone, setOnboardingDone] = useState(false);
@@ -1382,11 +1397,13 @@ export default function AllWin() {
       setHydrating(false);
       setCloudUserStateReady(false);
       cloudOnboardingHydratedRef.current = false;
+      cloudPersistReadyRef.current = false;
       return;
     }
     setHydrating(true);
     setCloudUserStateReady(false);
     cloudOnboardingHydratedRef.current = false;
+    cloudPersistReadyRef.current = false;
     setOnboardingDone(readLocalOnboardingDone(authUser.id, authUser.email));
   }, [authUser?.id, authUser?.email, authToken]);
 
@@ -1669,6 +1686,7 @@ export default function AllWin() {
             if (doneOffline) setOnboardingDone(true);
           });
           cloudOnboardingHydratedRef.current = true;
+          cloudPersistReadyRef.current = false;
           setCloudUserStateReady(true);
           return;
         }
@@ -1770,6 +1788,7 @@ export default function AllWin() {
           setEarnedOrdenPresetIds([]);
         }
         cloudOnboardingHydratedRef.current = true;
+        cloudPersistReadyRef.current = true;
         setCloudUserStateReady(true);
       } finally {
         setHydrating(false);
@@ -1779,7 +1798,7 @@ export default function AllWin() {
   }, [BILLING_API, authToken, authUser]);
 
   useEffect(() => {
-    if (!authUser || !authToken || isHydrating || !cloudUserStateReady) return;
+    if (!authUser || !authToken || isHydrating || !cloudUserStateReady || !cloudPersistReadyRef.current) return;
     const id = setTimeout(() => {
       const statePayload: Record<string, unknown> = {
             debts,
@@ -2308,10 +2327,11 @@ export default function AllWin() {
     }
 
     const { paymentMethod, linkedDebtId: _ld, ...rest } = form;
+    const txDate = /^\d{4}-\d{2}-\d{2}$/.test(form.date) ? form.date : todayIsoDate();
     const row: Transaction = {
       ...rest,
       id: Date.now(),
-      date: new Date().toISOString().slice(0, 10),
+      date: txDate,
       ...(paymentMethod ? { paymentMethod } : {}),
       ...(linkedDebtId != null ? { linkedDebtId, linkedDebtName } : {}),
       ...(form.type === 'ausgabe' && form.category === 'Notgroschen' && form.paymentMethod !== 'Notgroschen' && form.paymentMethod !== 'Einzahlung Cash Depot'
@@ -2322,7 +2342,7 @@ export default function AllWin() {
       ...(form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot' ? { creditsCashDepot: true } : {}),
     };
     setTx((prev) => [row, ...prev]);
-    setForm((f) => ({ ...f, amount: '', note: '', paymentMethod: '', linkedDebtId: '' }));
+    setForm((f) => ({ ...f, amount: '', note: '', paymentMethod: '', linkedDebtId: '', date: todayIsoDate() }));
 
     if (form.type === 'ausgabe' && form.category === 'Kreditrate' && linkedDebtId != null && linkedDebtName && tilgRestAfter !== undefined) {
       const ngSuffix =
@@ -2584,6 +2604,7 @@ export default function AllWin() {
     setHydrating(false);
     setOnboardingDone(false);
     cloudOnboardingHydratedRef.current = false;
+    cloudPersistReadyRef.current = false;
   };
 
   const saveProfileName = async () => {
@@ -3811,6 +3832,13 @@ export default function AllWin() {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <input style={S.input} type="number" placeholder="Betrag in €" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} />
+          <label style={{ fontSize: 11, color: '#7d8590', fontWeight: 600 }}>Datum</label>
+          <input
+            style={S.input}
+            type="date"
+            value={form.date}
+            onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+          />
           <select
             style={S.select}
             value={form.category}
