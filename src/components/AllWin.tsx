@@ -2219,7 +2219,10 @@ export default function AllWin() {
   }, [BILLING_API, authToken, authUser?.id]);
 
   const persistUserState = useCallback(
-    (override?: UserStateCache, options?: { replaceTransactions?: boolean; replaceDebts?: boolean }) => {
+    (
+      override?: UserStateCache,
+      options?: { replaceTransactions?: boolean; replaceDebts?: boolean; background?: boolean; retry?: boolean },
+    ) => {
       if (!authToken || !authUser?.id || !BILLING_API) return Promise.resolve(false);
       const txList = override?.transactions ?? transactions;
       const debtList = override?.debts ?? debts;
@@ -2278,7 +2281,7 @@ export default function AllWin() {
       cloudPersistAbortRef.current?.abort();
       const abort = new AbortController();
       cloudPersistAbortRef.current = abort;
-      return fetch(`${BILLING_API}/api/user/state`, {
+      const requestInit: RequestInit = {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -2286,7 +2289,10 @@ export default function AllWin() {
         },
         body: JSON.stringify({ state: statePayload }),
         signal: abort.signal,
-      })
+        // iOS Safari/PWA: erlaubt Versand beim Hintergrundwechsel/Tab-Schließen.
+        keepalive: options?.background === true,
+      };
+      return fetch(`${BILLING_API}/api/user/state`, requestInit)
         .then(async (res) => {
           if (abort.signal.aborted) return false;
           if (!res.ok) {
@@ -2303,8 +2309,23 @@ export default function AllWin() {
           }
           return true;
         })
-        .catch((err: unknown) => {
+        .catch(async (err: unknown) => {
           if (err instanceof DOMException && err.name === 'AbortError') return false;
+          // Einmaliger Retry bei kurzfristigen Mobilfunk-/WLAN-Aussetzern.
+          if (options?.retry !== false && navigator.onLine) {
+            try {
+              await new Promise((resolve) => setTimeout(resolve, 350));
+              const retryRes = await fetch(`${BILLING_API}/api/user/state`, requestInit);
+              if (!retryRes.ok) return false;
+              const body = await retryRes.json().catch(() => null);
+              if (typeof body?.clientSavedAt === 'number' && !Number.isNaN(body.clientSavedAt)) {
+                cloudSavedAtRef.current = body.clientSavedAt;
+              }
+              return true;
+            } catch {
+              /* ignore retry error */
+            }
+          }
           /* Cloud-Sync fehlgeschlagen — lokaler Cache bleibt die Quelle */
           return false;
         });
@@ -2348,7 +2369,7 @@ export default function AllWin() {
 
   useEffect(() => {
     if (!authToken || !authUser?.id) return;
-    const flushToCloud = () => persistUserState();
+    const flushToCloud = () => persistUserState(undefined, { background: true });
     const onVisHide = () => {
       if (document.visibilityState === 'hidden') flushToCloud();
     };
@@ -2359,6 +2380,16 @@ export default function AllWin() {
       document.removeEventListener('visibilitychange', onVisHide);
     };
   }, [authToken, authUser?.id, persistUserState]);
+
+  useEffect(() => {
+    if (!authToken || !authUser?.id || !cloudPersistReadyRef.current) return;
+    const onOnline = () => {
+      clearPendingCloudPersist();
+      void persistUserState(undefined, { retry: false });
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, [authToken, authUser?.id, persistUserState, clearPendingCloudPersist]);
 
   useEffect(() => {
     if (!authUser || !authToken || isHydrating || !cloudUserStateReady || !cloudPersistReadyRef.current) return;
