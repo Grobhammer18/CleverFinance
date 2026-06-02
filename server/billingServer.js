@@ -493,9 +493,15 @@ app.put('/api/user/state', (req, res) => {
   const replaceDebts = rawIncoming._replaceDebts === true;
   const incoming = stripEmptyOverwrites(prevState, rawIncoming, { replaceTransactions, replaceDebts });
   const clientSavedAt = Number(rawIncoming._clientSavedAt) || 0;
+  const prevSavedAt = Number(prevState._clientSavedAt) || 0;
+  const isStaleWrite = clientSavedAt > 0 && prevSavedAt > 0 && clientSavedAt < prevSavedAt;
   delete incoming._replaceTransactions;
   delete incoming._replaceDebts;
   delete incoming._clientSavedAt;
+  if (isStaleWrite) {
+    const txCount = Array.isArray(prevState.transactions) ? prevState.transactions.length : 0;
+    return res.json({ ok: true, staleIgnored: true, clientSavedAt: prevSavedAt, transactionCount: txCount });
+  }
   const prevOb = prevState.onboarding || {};
   const incOb = incoming.onboarding;
   let nextState = { ...prevState, ...incoming };
