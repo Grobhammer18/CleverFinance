@@ -1603,7 +1603,6 @@ export default function AllWin() {
   const cloudPersistReadyRef = useRef(false);
   const cloudSavedAtRef = useRef(0);
   const cloudPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cloudPersistAbortRef = useRef<AbortController | null>(null);
   const clearPendingCloudPersist = useCallback(() => {
     if (cloudPersistTimerRef.current != null) {
       clearTimeout(cloudPersistTimerRef.current);
@@ -2278,9 +2277,6 @@ export default function AllWin() {
         if (onboardingV2 != null) onboardingPayload.v2 = onboardingV2;
         statePayload.onboarding = onboardingPayload;
       }
-      cloudPersistAbortRef.current?.abort();
-      const abort = new AbortController();
-      cloudPersistAbortRef.current = abort;
       const requestInit: RequestInit = {
         method: 'PUT',
         headers: {
@@ -2288,13 +2284,11 @@ export default function AllWin() {
           Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({ state: statePayload }),
-        signal: abort.signal,
         // iOS Safari/PWA: erlaubt Versand beim Hintergrundwechsel/Tab-Schließen.
         keepalive: options?.background === true,
       };
       return fetch(`${BILLING_API}/api/user/state`, requestInit)
         .then(async (res) => {
-          if (abort.signal.aborted) return false;
           if (!res.ok) {
             if (import.meta.env.DEV) console.warn('[cloud] PUT /api/user/state', res.status);
             return false;
@@ -2309,8 +2303,7 @@ export default function AllWin() {
           }
           return true;
         })
-        .catch(async (err: unknown) => {
-          if (err instanceof DOMException && err.name === 'AbortError') return false;
+        .catch(async () => {
           // Einmaliger Retry bei kurzfristigen Mobilfunk-/WLAN-Aussetzern.
           if (options?.retry !== false && navigator.onLine) {
             try {
