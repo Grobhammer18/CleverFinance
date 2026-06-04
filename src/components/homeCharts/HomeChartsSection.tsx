@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useMemo, useState } from 'react';
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
   Cell,
@@ -51,9 +51,11 @@ function YearMoneyOverviewCard(props: {
   const nets = props.buckets.map((m) => Math.abs(m.einnahmen - m.ausgaben));
   const maxAbs = Math.max(1, ...nets);
   const yearSum = props.buckets.reduce((s, m) => s + m.einnahmen - m.ausgaben, 0);
-  const wrapStyle: CSSProperties = props.levelUpLocked
-    ? cardStyle
-    : { ...cardStyle, marginBottom: 22, border: '1px solid #7c3aed44' };
+  const wrapStyle: CSSProperties = {
+    ...cardStyle,
+    marginBottom: 24,
+    ...(!props.levelUpLocked ? { border: '1px solid #7c3aed44' } : {}),
+  };
 
   return (
     <div style={wrapStyle}>
@@ -128,12 +130,8 @@ type Props = {
   levelUpLocked?: boolean;
 };
 
-/** Eine Linie im Chart; Tooltip: Schulden-Zeile nur, wenn dieser Stichtag noch Restschuld hatte. */
-function WealthKomplettTooltip({ active, payload, label }: { active?: boolean; payload?: readonly { payload?: WealthLinePt }[]; label?: string }) {
-  if (!active || !payload?.length) return null;
-  const row = payload[0]?.payload;
-  if (!row) return null;
-  const rowBg = '#161b22';
+/** Detailkarte unter dem Chart — blockiert keine weiteren Klicks auf die Linie. */
+function WealthDetailPanel({ row, onClose }: { row: WealthLinePt; onClose: () => void }) {
   const hadDebtHere = row.schulden > 0.5;
   const hadImmoHere = row.immobilienWert > 0.5;
   const hadPortfolioHere = row.portfolioPlusCash > 0.5;
@@ -144,17 +142,34 @@ function WealthKomplettTooltip({ active, payload, label }: { active?: boolean; p
   return (
     <div
       style={{
-        background: rowBg,
+        background: '#161b22',
         border: `1px solid ${aw.line}`,
-        borderRadius: 8,
-        padding: '10px 12px',
+        borderRadius: 10,
+        padding: '12px 14px',
         fontSize: 12,
         color: '#e6edf3',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-        minWidth: 220,
       }}
     >
-      <div style={{ fontWeight: 800, marginBottom: 8, color: '#c9d1d9' }}>{label}</div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+        <div style={{ fontWeight: 800, color: '#c9d1d9' }}>{row.label}</div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Details schließen"
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#8b949e',
+            fontSize: 18,
+            lineHeight: 1,
+            padding: '0 2px',
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          ×
+        </button>
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${aw.line}` }}>
         <span style={{ width: 10, height: 10, borderRadius: 2, background: '#00d4aa', flexShrink: 0 }} />
         <span style={{ color: '#8b949e' }}>
@@ -183,6 +198,10 @@ function WealthKomplettTooltip({ active, payload, label }: { active?: boolean; p
     </div>
   );
 }
+
+type WealthChartClickState = {
+  activePayload?: ReadonlyArray<{ payload?: WealthLinePt }>;
+};
 
 function PieTooltip({ active, payload }: { active?: boolean; payload?: readonly { payload?: PieSlice & { pct?: number } }[] }) {
   if (!active || !payload?.[0]?.payload) return null;
@@ -276,6 +295,8 @@ export default function HomeChartsSection(props: Props) {
   const wealthLen = wealth.length;
   const standalone = props.standalonePage ?? false;
   const levelUpLocked = props.levelUpLocked ?? props.moneyYearOverview?.levelUpLocked ?? false;
+  const [wealthDetail, setWealthDetail] = useState<WealthLinePt | null>(null);
+  const wealthDetailRef = useRef<HTMLDivElement>(null);
   const wealthDisplay = useMemo((): WealthLinePt[] => {
     if (!levelUpLocked) return wealth;
     return wealth.map((w) => ({
@@ -284,6 +305,24 @@ export default function HomeChartsSection(props: Props) {
       saldoKomplett: saldoKomplettFromParts(w.notgroschen, 0, w.schulden, w.immobilienWert ?? 0),
     }));
   }, [wealth, levelUpLocked]);
+
+  useEffect(() => {
+    setWealthDetail(null);
+  }, [wealthDisplay]);
+
+  useEffect(() => {
+    if (!wealthDetail || !wealthDetailRef.current) return;
+    const t = window.setTimeout(() => {
+      wealthDetailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, [wealthDetail]);
+
+  const pickWealthPoint = (state: WealthChartClickState | null | undefined) => {
+    const row = state?.activePayload?.[0]?.payload;
+    if (row) setWealthDetail(row);
+  };
+
   const [open, setOpen] = useState(true);
 
   /** reduzierte X-Ticks bei langen Reihen */
@@ -378,6 +417,7 @@ export default function HomeChartsSection(props: Props) {
             />
           ) : null}
           <ChartBlock
+            topSpacing={standalone && props.moneyYearOverview ? 4 : 0}
             title="Komplette Vermögensübersicht"
             subtitle={
               levelUpLocked
@@ -385,12 +425,16 @@ export default function HomeChartsSection(props: Props) {
                   ? 'Notgroschen + Immobilien (Boost) − Schulden — Portfolio erst nach Freischaltung von LevelUp.'
                   : 'Notgroschen + Immobilien (Boost) − Schulden. Portfolio fließt ein, sobald LevelUp frei ist.'
                 : isDailySnapshotSeries
-                  ? 'Eine Linie: Notgroschen + Portfolio + Immobilien (Marktwert aus Boost) − Schulden pro Tag. Tooltip: Detail je Stichtag.'
-                  : 'Eine Linie: Notgroschen + Portfolio + Immobilien (Marktwert Hauskredit in Boost) − Schulden. Monat anfahren für Einzelteile; ab 2 Tages-Snapshots tägliche Kurve.'
+                  ? 'Tippen auf einen Punkt — Details erscheinen unter dem Diagramm (weitere Punkte weiter anklickbar).'
+                  : 'Tippen auf einen Monat — Details unter dem Diagramm. Ab 2 Tages-Snapshots tägliche Kurve.'
             }
           >
             <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={wealthDisplay} margin={wealthChartMargins}>
+              <LineChart
+                data={wealthDisplay}
+                margin={wealthChartMargins}
+                onClick={(state) => pickWealthPoint(state as WealthChartClickState)}
+              >
                 <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: '#8b949e', fontSize: 10 }} ticks={xTicks} interval={0} />
                 <YAxis
@@ -399,19 +443,46 @@ export default function HomeChartsSection(props: Props) {
                   width={36}
                   domain={['auto', 'auto']}
                 />
-                <Tooltip content={<WealthKomplettTooltip />} />
+                <Tooltip content={() => null} cursor={{ stroke: '#484f58', strokeWidth: 1, strokeDasharray: '4 4' }} />
                 <Legend wrapperStyle={{ color: '#c9d1d9', fontSize: 11, paddingTop: 8 }} />
                 <Line
                   type="monotone"
-                  dot={false}
+                  dot={(dotProps: { cx?: number; cy?: number; payload?: WealthLinePt }) => {
+                    const { cx, cy, payload } = dotProps;
+                    if (cx == null || cy == null) return null;
+                    return (
+                      <circle
+                        cx={cx}
+                        cy={cy}
+                        r={5}
+                        fill="#0d1117"
+                        stroke="#00d4aa"
+                        strokeWidth={2}
+                        style={{ cursor: 'pointer' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (payload) setWealthDetail(payload);
+                        }}
+                      />
+                    );
+                  }}
                   strokeWidth={3}
-                  activeDot={{ r: 5 }}
+                  activeDot={{ r: 7, stroke: '#00d4aa', strokeWidth: 2, fill: '#161b22' }}
                   name={levelUpLocked ? 'NG + Immobilien − Schulden' : 'NG + Portfolio + Immobilien − Schulden'}
                   dataKey="saldoKomplett"
                   stroke="#00d4aa"
                 />
               </LineChart>
             </ResponsiveContainer>
+            <div ref={wealthDetailRef} style={{ marginTop: 14 }}>
+              {wealthDetail ? (
+                <WealthDetailPanel row={wealthDetail} onClose={() => setWealthDetail(null)} />
+              ) : (
+                <div style={{ fontSize: 11, color: '#6e7681', textAlign: 'center' as const, padding: '6px 0 2px' }}>
+                  Punkt auf der Linie antippen — Einzelheiten erscheinen hier.
+                </div>
+              )}
+            </div>
           </ChartBlock>
 
           {levelUpLocked ? (
@@ -515,13 +586,15 @@ function ChartBlock({
   title,
   subtitle,
   children,
+  topSpacing = 0,
 }: {
   title: string;
   subtitle: string;
   children: ReactNode;
+  topSpacing?: number;
 }) {
   return (
-    <div style={{ marginBottom: 22 }}>
+    <div style={{ marginBottom: 22, marginTop: topSpacing }}>
       <div style={{ fontSize: 13, fontWeight: 800, color: '#e6edf3', marginBottom: 6 }}>{title}</div>
       <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 10, lineHeight: 1.45 }}>{subtitle}</div>
       <div style={{ marginTop: 16 }}>{children}</div>
