@@ -458,8 +458,8 @@ export default function HomeChartsSection(props: Props) {
                   ? 'Notgroschen + Immobilien (Boost) − Schulden — Portfolio erst nach Freischaltung von LevelUp.'
                   : 'Notgroschen + Immobilien (Boost) − Schulden. Portfolio fließt ein, sobald LevelUp frei ist.'
                 : isDailySnapshotSeries
-                  ? 'Punkt oder Stichtag-Button antippen — Details darunter. Auf dem iPhone sind die Buttons am zuverlässigsten.'
-                  : 'Punkt oder Stichtag-Button — Details unter dem Diagramm.'
+                  ? 'Punkt auf der Linie antippen — Details erscheinen unter dem Diagramm.'
+                  : 'Punkt auf der Linie antippen — Details unter dem Diagramm.'
             }
           >
             <ResponsiveContainer width="100%" height={260}>
@@ -515,44 +515,12 @@ export default function HomeChartsSection(props: Props) {
                 />
               </LineChart>
             </ResponsiveContainer>
-            {wealthDisplay.length > 0 ? (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, fontWeight: 700, letterSpacing: '0.04em' }}>
-                  STICHTAG WÄHLEN
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {wealthDisplay.map((pt) => {
-                    const selected = wealthDetail?.ym === pt.ym;
-                    return (
-                      <button
-                        key={pt.ym}
-                        type="button"
-                        onClick={() => selectWealthRow(pt)}
-                        style={{
-                          padding: '8px 12px',
-                          borderRadius: 8,
-                          border: selected ? '1px solid #00d4aa' : `1px solid ${aw.line}`,
-                          background: selected ? 'rgba(0, 212, 170, 0.14)' : '#161b22',
-                          color: selected ? '#00d4aa' : '#c9d1d9',
-                          fontSize: 12,
-                          fontWeight: selected ? 800 : 600,
-                          cursor: 'pointer',
-                          touchAction: 'manipulation',
-                        }}
-                      >
-                        {pt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
             <div ref={wealthDetailRef} style={{ marginTop: 14 }}>
               {wealthDetail ? (
                 <WealthDetailPanel row={wealthDetail} onClose={() => setWealthDetail(null)} />
               ) : (
                 <div style={{ fontSize: 11, color: '#6e7681', textAlign: 'center' as const, padding: '6px 0 2px' }}>
-                  Punkt oder Stichtag antippen — Einzelheiten erscheinen hier.
+                  Punkt auf der Linie antippen — Einzelheiten erscheinen hier.
                 </div>
               )}
             </div>
