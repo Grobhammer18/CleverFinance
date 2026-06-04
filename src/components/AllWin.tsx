@@ -4887,6 +4887,10 @@ export default function AllWin() {
         onChange={onReceiptFilePicked}
       />
       <div style={{ ...S.card, marginBottom: 10 }}>
+        <div style={S.label}>🧾 Kassenzettel-Scan</div>
+        <div style={{ fontSize: 11, color: '#8b949e', marginTop: 4, marginBottom: 10, lineHeight: 1.45 }}>
+          Kassenzettel, Quittung oder Rechnung — Betrag & Händler werden vorausgefüllt (du prüfst vor dem Speichern).
+        </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
           <button
             type="button"
@@ -4899,13 +4903,13 @@ export default function AllWin() {
             }}
             onClick={() => {
               if (!authToken) {
-                showToast('Bitte anmelden, um Kassenzettel zu scannen.', 'error');
+                showToast('Bitte anmelden für den Kassenzettel-Scan.', 'error');
                 return;
               }
               receiptCameraInputRef.current?.click();
             }}
           >
-            {receiptScanning ? '⏳ …' : '📷 Foto'}
+            {receiptScanning ? '⏳ …' : '📷 Beleg fotografieren'}
           </button>
           <button
             type="button"
@@ -4922,21 +4926,20 @@ export default function AllWin() {
             }}
             onClick={() => {
               if (!authToken) {
-                showToast('Bitte anmelden, um Kassenzettel zu scannen.', 'error');
+                showToast('Bitte anmelden für den Kassenzettel-Scan.', 'error');
                 return;
               }
               receiptLibraryInputRef.current?.click();
             }}
           >
-            {receiptScanning ? '⏳ …' : '🖼 Mediathek'}
+            {receiptScanning ? '⏳ …' : '🖼 Beleg aus Mediathek'}
           </button>
         </div>
         {receiptScanning && (
           <div style={{ fontSize: 12, color: '#00d4aa', marginTop: 8, fontWeight: 600 }}>Beleg wird gelesen…</div>
         )}
-        <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8, lineHeight: 1.45 }}>
-          Foto oder Bild aus der Mediathek — Vorschlag für Betrag, Datum und Händler. Du bestätigst mit Speichern. Das
-          Bild wird nicht in der App gespeichert.
+        <div style={{ fontSize: 11, color: '#7d8590', marginTop: 8, lineHeight: 1.45 }}>
+          Das Foto wird nicht in der App gespeichert — nur die Buchung nach deiner Bestätigung.
         </div>
       </div>
       <div data-tour="money-form" style={S.card}>

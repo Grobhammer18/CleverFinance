@@ -130,7 +130,7 @@ export async function scanReceiptImage({ imageBase64, mimeType = 'image/jpeg' })
   const safeMime = /^image\/(jpeg|jpg|png|webp|heic|heif)$/i.test(mimeType) ? mimeType : 'image/jpeg';
   const dataUrl = `data:${safeMime};base64,${b64}`;
 
-  const systemPrompt = `Du analysierst Fotos von deutschen Kassenzetteln und Belegen.
+  const systemPrompt = `Du analysierst Fotos von deutschen Kassenzetteln, Quittungen, Rechnungen und Belegen (PDF-Ausdrucke als Foto).
 Antworte NUR mit einem JSON-Objekt (kein Markdown drumherum), Schema:
 {
   "amount": number,
@@ -141,8 +141,9 @@ Antworte NUR mit einem JSON-Objekt (kein Markdown drumherum), Schema:
   "confidence": "high" | "medium" | "low"
 }
 Regeln:
-- amount = GESAMT / SUMME / zu zahlen (EUR), nicht Einzelposten addieren wenn Gesamtsumme sichtbar.
-- merchant = Ladenname (kurz).
+- amount = GESAMT / SUMME / Rechnungsbetrag / zu zahlen / Brutto (EUR), nicht Einzelposten addieren wenn Gesamtsumme sichtbar.
+- merchant = Laden, Anbieter oder Rechnungssteller (kurz).
+- Bei Rechnungen: Rechnungsdatum wenn kein Kassendatum; Ausgabe (keine Einnahme).
 - Bei Unsicherheit: category "Sonstiges", confidence "low".
 - Typische Ausgabe (kein Gehalt).`;
 
@@ -161,7 +162,7 @@ Regeln:
         {
           role: 'user',
           content: [
-            { type: 'text', text: 'Extrahiere die Buchungsdaten aus diesem Kassenzettel.' },
+            { type: 'text', text: 'Extrahiere die Buchungsdaten aus diesem Kassenzettel, dieser Quittung oder Rechnung.' },
             { type: 'image_url', image_url: { url: dataUrl, detail: 'low' } },
           ],
         },
