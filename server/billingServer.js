@@ -6,6 +6,17 @@ import path from 'path';
 import crypto from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import {
+  initDb,
+  loadUsers,
+  saveUser,
+  insertFeedback,
+  recordEvent,
+  recordUsagePing,
+  attachReferral,
+  FEEDBACK_KINDS,
+} from './db.js';
+import { mountAdminRoutes } from './adminRoutes.js';
 
 const envPath = fs.existsSync('.env.local') ? '.env.local' : '.env';
 dotenv.config({ path: envPath });
@@ -26,41 +37,7 @@ const googleClient = new OAuth2Client();
 const appleAudience = process.env.APPLE_CLIENT_ID || process.env.VITE_APPLE_CLIENT_ID || '';
 const appleIssuer = 'https://appleid.apple.com';
 const appleJwks = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
-const dataDir = path.resolve('server/data');
-const usersFile = path.join(dataDir, 'users.json');
-const feedbackFile = path.join(dataDir, 'feedback.json');
-
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-if (!fs.existsSync(usersFile)) fs.writeFileSync(usersFile, JSON.stringify({ users: [] }, null, 2));
-if (!fs.existsSync(feedbackFile)) fs.writeFileSync(feedbackFile, JSON.stringify({ entries: [] }, null, 2));
-
-function loadUsers() {
-  try {
-    const data = JSON.parse(fs.readFileSync(usersFile, 'utf8'));
-    return Array.isArray(data.users) ? data.users : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveUsers(users) {
-  fs.writeFileSync(usersFile, JSON.stringify({ users }, null, 2));
-}
-
-function loadFeedbackEntries() {
-  try {
-    const data = JSON.parse(fs.readFileSync(feedbackFile, 'utf8'));
-    return Array.isArray(data.entries) ? data.entries : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveFeedbackEntries(entries) {
-  fs.writeFileSync(feedbackFile, JSON.stringify({ entries }, null, 2));
-}
-
-const FEEDBACK_KINDS = new Set(['bug', 'improve', 'feature', 'other']);
+initDb();
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
@@ -219,6 +196,7 @@ function upsertOauthUser({ provider, providerId, email, name }) {
       updatedAt: new Date().toISOString(),
     };
     users.push(user);
+    recordEvent({ userId: user.id, eventType: 'signup', meta: { provider } });
   } else {
     user.oauth = { ...(user.oauth || {}), [provider]: pid };
     if (normEmail) user.email = normEmail;
@@ -226,7 +204,7 @@ function upsertOauthUser({ provider, providerId, email, name }) {
     user.updatedAt = new Date().toISOString();
   }
 
-  saveUsers(users);
+  saveUser(user);
   return user;
 }
 
@@ -375,8 +353,10 @@ app.post('/api/auth/register', (req, res) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  users.push(user);
-  saveUsers(users);
+  saveUser(user);
+  recordEvent({ userId: user.id, eventType: 'signup', meta: { method: 'email' } });
+  const aff = String(req.body?.affiliateCode || '').trim();
+  if (aff) attachReferral({ code: aff, userId: user.id });
 
   const token = signToken({ userId: user.id, email: user.email });
   return res.json({ token, user: sanitizeUser(user) });
@@ -390,6 +370,7 @@ app.post('/api/auth/login', (req, res) => {
   if (!user || !user.passwordHash || !verifyPassword(password, user.passwordHash)) {
     return res.status(401).json({ error: 'Ungültige E-Mail oder Passwort.' });
   }
+  recordEvent({ userId: user.id, eventType: 'login', meta: { method: 'email' } });
   const token = signToken({ userId: user.id, email: user.email });
   return res.json({ token, user: sanitizeUser(user) });
 });
@@ -415,13 +396,13 @@ app.put('/api/auth/profile', (req, res) => {
   const index = users.findIndex((u) => u.id === payload.userId);
   if (index < 0) return res.status(401).json({ error: 'Unauthorized' });
 
-  users[index] = {
+  const updated = {
     ...users[index],
     name,
     updatedAt: new Date().toISOString(),
   };
-  saveUsers(users);
-  return res.json({ user: sanitizeUser(users[index]) });
+  saveUser(updated);
+  return res.json({ user: sanitizeUser(updated) });
 });
 
 app.post('/api/auth/oauth/google', async (req, res) => {
@@ -443,6 +424,7 @@ app.post('/api/auth/oauth/google', async (req, res) => {
       email: normalizeEmail(payload.email || ''),
       name: payload.name || 'Google User',
     });
+    recordEvent({ userId: user.id, eventType: 'login', meta: { method: 'google' } });
 
     const token = signToken({ userId: user.id, email: user.email });
     return res.json({ token, user: sanitizeUser(user) });
@@ -472,6 +454,7 @@ app.post('/api/auth/oauth/apple', async (req, res) => {
       email: normalizeEmail(String(payload.email || '')),
       name: fullName || 'Apple User',
     });
+    recordEvent({ userId: user.id, eventType: 'login', meta: { method: 'apple' } });
 
     const token = signToken({ userId: user.id, email: user.email });
     return res.json({ token, user: sanitizeUser(user) });
@@ -491,8 +474,7 @@ app.get('/api/user/state', (req, res) => {
   let state = user.state || {};
   const patched = ensureOnboardingDoneInState(state);
   if (patched !== state) {
-    users[index] = { ...user, state: patched, updatedAt: new Date().toISOString() };
-    saveUsers(users);
+    saveUser({ ...user, state: patched });
     state = patched;
   }
   return res.json({ state });
@@ -535,20 +517,30 @@ app.put('/api/user/state', (req, res) => {
     }
     if (hadV2 && (incOb.v2 == null || incOb.v2 === undefined) && incOb.reset !== true) {
       mergedOb.v2 = prevOb.v2;
+
     }
     if (incOb.reset === true) delete mergedOb.reset;
     nextState = { ...nextState, onboarding: mergedOb };
   }
   const nextSavedAt = Math.max(Number(prevState._clientSavedAt) || 0, clientSavedAt, Date.now());
   nextState._clientSavedAt = nextSavedAt;
-  users[index] = {
+  const updatedUser = {
     ...users[index],
     state: nextState,
     updatedAt: new Date().toISOString(),
   };
-  saveUsers(users);
+  saveUser(updatedUser);
   const txCount = Array.isArray(nextState.transactions) ? nextState.transactions.length : 0;
   return res.json({ ok: true, clientSavedAt: nextSavedAt, transactionCount: txCount });
+});
+
+app.post('/api/analytics/ping', (req, res) => {
+  const payload = getAuthPayload(req);
+  if (!payload) return res.status(401).json({ error: 'Unauthorized' });
+  const tab = String(req.body?.tab || '').trim().slice(0, 32) || null;
+  recordUsagePing(payload.userId, tab);
+  if (tab) recordEvent({ userId: payload.userId, eventType: 'tab', tab });
+  return res.json({ ok: true });
 });
 
 app.post('/api/feedback', (req, res) => {
@@ -570,20 +562,15 @@ app.post('/api/feedback', (req, res) => {
     return res.status(400).json({ error: 'Nachricht ist zu lang (max. 8000 Zeichen).' });
   }
 
-  const entry = {
-    id: crypto.randomUUID(),
+  const { id } = insertFeedback({
     userId: user.id,
     email: user.email,
     name: user.name || '',
     kind,
     message,
-    createdAt: new Date().toISOString(),
-  };
-  const entries = loadFeedbackEntries();
-  entries.push(entry);
-  saveFeedbackEntries(entries.slice(-2000));
-  console.log(`[feedback] ${kind} from ${user.email} (${entry.id})`);
-  return res.json({ ok: true, id: entry.id });
+  });
+  console.log(`[feedback] ${kind} from ${user.email} (${id})`);
+  return res.json({ ok: true, id });
 });
 
 app.post('/api/billing/create-checkout-session', async (req, res) => {
@@ -642,6 +629,13 @@ app.get('/api/billing/checkout-session/:sessionId', async (req, res) => {
   }
 });
 
+mountAdminRoutes(app);
+
 app.listen(port, '0.0.0.0', () => {
   console.log(`[billing] listening on http://0.0.0.0:${port}`);
+  if (process.env.ADMIN_SECRET) {
+    console.log('[billing] Creator-Dashboard: /creator');
+  } else {
+    console.warn('[billing] ADMIN_SECRET fehlt — Creator-Dashboard deaktiviert');
+  }
 });

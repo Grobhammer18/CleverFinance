@@ -1,40 +1,65 @@
-# Clever Finance — Tester (Schritt 1)
+# Clever Finance — Tester (Beta)
 
-**Test-Start:** 16. Juni 2026 · **Feedback bis:** 29. Juni 2026
-
-Trage hier ein, wen du einlädst. Status aktualisieren, wenn Einladung raus ist / Feedback da ist.
-
-| # | Name | Kontakt (E-Mail / WhatsApp) | Gerät (iPhone/Android/Desktop) | Eingeladen am | Getestet? | Feedback? | Notizen |
-|---|------|----------------------------|--------------------------------|---------------|-----------|-----------|---------|
-| 1 | Erdi | | iPhone | | ☐ | ☐ | |
-| 2 | Jamila | | iPhone | | ☐ | ☐ | |
-| 3 | Moritz | | iPhone | | ☐ | ☐ | |
-| 4 | Tobias Jakobs | | iPhone | | ☐ | ☐ | |
-| 5 | Tobias Ruf | | iPhone | | ☐ | ☐ | |
-| 6 | | | | | ☐ | ☐ | Reserve |
-| 7 | | | | | ☐ | ☐ | Reserve |
-| 8 | | | | | ☐ | ☐ | Reserve |
-| 9 | | | | | ☐ | ☐ | Reserve |
-| 10 | | | | | ☐ | ☐ | Reserve |
-
-**Ziel:** 5–15 Personen (Team + 2–3 Vertraute außerhalb).
+**Test-Start:** Fr. 30. Mai 2026 (Alwin) · **Feedback bis:** Montag, 15. Juni 2026  
+**App live:** https://clever-finance.vercel.app · **Go-Check Handy (Alwin):** 28. Mai 2026 ✅
 
 ---
 
-## Einladungstext (wenn App-URL + Formular stehen)
+## Live-URLs
 
-Kopieren und `[…]` ersetzen:
+| Was | URL |
+|-----|-----|
+| **App (an Tester senden)** | https://clever-finance.vercel.app |
+| **API (nur Technik)** | https://cleverfinance-production.up.railway.app |
+| **Feedback** | https://docs.google.com/forms/d/e/1FAIpQLSc0I-GQeqb7ND_EkofGvIYcUO44ZyMvllKOOYOLv6OakE3gwA/viewform |
+
+---
+
+## Tester-Status
+
+| # | Name | Gerät | Eingeladen am | Getestet? | Feedback? |
+|---|------|-------|---------------|-----------|-----------|
+| 1 | Erdi | iPhone | | ☐ | ☐ |
+| 2 | Jamila | iPhone | | ☐ | ☐ |
+| 3 | Moritz | iPhone | | ☐ | ☐ |
+| 4 | Tobias Jakobs | iPhone | | ☐ | ☐ |
+| 5 | Tobias Ruf | iPhone | | ☐ | ☐ |
+
+Nach dem Versand: Datum unter „Eingeladen am“ eintragen (z. B. `28.05.` oder `16.06.`).
+
+---
+
+## Einladung (WhatsApp / iMessage — Copy & Paste)
+
+Pro Person `[Name]` ersetzen:
 
 ```
 Hallo [Name],
 
-wir testen Clever Finance (Finanz-App) in einer kostenlosen Beta — alles ist gratis, keine Zahlung nötig.
+wir testen Clever Finance — unsere Finanz-App in einer kostenlosen Beta. Alles ist gratis, keine Zahlung.
 
-🔗 App: [APP-URL]
-⏱️ Bitte ca. 20–30 Min: Konto anlegen → Onboarding + Tour → 2–3 Buchungen unter „Money“ → kurz Home & LevelUp anschauen.
+🔗 App: https://clever-finance.vercel.app
+⏱️ Bitte ca. 20–30 Min: Konto anlegen → Onboarding + Tour → 2–3 Buchungen unter „Money“ → kurz Home & LevelUp.
 📊 Marktkurse sind Demo (keine echte Börse).
 
-📝 Feedback bis 29.6.: [FORMULAR-URL]
+📝 Feedback bis 15.6.: https://docs.google.com/forms/d/e/1FAIpQLSc0I-GQeqb7ND_EkofGvIYcUO44ZyMvllKOOYOLv6OakE3gwA/viewform
+
+Danke dir — jedes ehrliche Feedback hilft uns sehr!
+Alwin
+```
+
+**Beispiel (Erdi):**
+
+```
+Hallo Erdi,
+
+wir testen Clever Finance — unsere Finanz-App in einer kostenlosen Beta. Alles ist gratis, keine Zahlung.
+
+🔗 App: https://clever-finance.vercel.app
+⏱️ Bitte ca. 20–30 Min: Konto anlegen → Onboarding + Tour → 2–3 Buchungen unter „Money“ → kurz Home & LevelUp.
+📊 Marktkurse sind Demo (keine echte Börse).
+
+📝 Feedback bis 15.6.: https://docs.google.com/forms/d/e/1FAIpQLSc0I-GQeqb7ND_EkofGvIYcUO44ZyMvllKOOYOLv6OakE3gwA/viewform
 
 Danke dir — jedes ehrliche Feedback hilft uns sehr!
 Alwin
@@ -42,11 +67,17 @@ Alwin
 
 ---
 
-## URLs (nach Deploy eintragen)
+## Vor dem ersten Tester-Versand (einmalig)
 
-| Was | URL |
-|-----|-----|
-| App | *(nach Deploy)* |
-| Feedback-Formular | https://docs.google.com/forms/d/e/1FAIpQLSc0I-GQeqb7ND_EkofGvIYcUO44ZyMvllKOOYOLv6OakE3gwA/viewform |
+- [x] App auf iPhone getestet (Alwin, 28.05.2026)
+- [ ] Railway **Volume** auf `/app/server/data` (Accounts bleiben bei Redeploy)
+- [ ] Railway: `APP_URL` = `https://clever-finance.vercel.app`
+- [ ] Impressum unter **Mehr** mit echtem Kontakt (nicht nur Platzhalter)
 
-→ Auch in [BETA_LAUNCH.md](./BETA_LAUNCH.md) eintragen.
+---
+
+## Nach dem 16.6. / laufend
+
+- [ ] Alle 5 Tester eingeladen (Häkchen oben)
+- [ ] Formular-Antworten unter [Google Form](https://docs.google.com/forms/d/e/1FAIpQLSc0I-GQeqb7ND_EkofGvIYcUO44ZyMvllKOOYOLv6OakE3gwA/viewform) → Tab „Antworten“
+- [ ] 1.7. intern: Top-3 Bugs + Top-3 UX auswerten ([BETA_LAUNCH.md](./BETA_LAUNCH.md))

@@ -10,6 +10,9 @@ coverage/
 # Lokale Nutzerdaten (Auth-Server) — nie ins Repo
 server/data/users.json
 server/data/feedback.json
+server/data/clever.db
+server/data/clever.db-wal
+server/data/clever.db-shm
 
 # Export-Archive
 *.zip

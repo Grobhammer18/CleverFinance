@@ -2046,6 +2046,11 @@ export default function AllWin() {
   }, [authToken]);
 
   useEffect(() => {
+    const ref = new URLSearchParams(window.location.search).get('ref')?.trim();
+    if (ref) localStorage.setItem('allwin.affiliate', ref);
+  }, []);
+
+  useEffect(() => {
     setProfileNameDraft(authUser?.name || '');
   }, [authUser]);
 
@@ -2404,6 +2409,24 @@ export default function AllWin() {
       document.removeEventListener('visibilitychange', onVisHide);
     };
   }, [authToken, authUser?.id, persistUserState]);
+
+  useEffect(() => {
+    if (!authToken || !authUser?.id || !BILLING_API) return;
+    const sendPing = () => {
+      void fetch(`${BILLING_API}/api/analytics/ping`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tab }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    sendPing();
+    const id = window.setInterval(sendPing, 60_000);
+    return () => window.clearInterval(id);
+  }, [BILLING_API, authToken, authUser?.id, tab]);
 
   useEffect(() => {
     if (!authToken || !authUser?.id || !cloudPersistReadyRef.current) return;
@@ -3292,10 +3315,19 @@ export default function AllWin() {
       const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
       const email = authForm.email.trim();
       const password = authForm.password;
+      const affiliateCode =
+        localStorage.getItem('allwin.affiliate') ||
+        new URLSearchParams(window.location.search).get('ref') ||
+        '';
       const payload =
         authMode === 'login'
           ? { email, password }
-          : { name: authForm.name.trim() || email.split('@')[0] || 'User', email, password };
+          : {
+              name: authForm.name.trim() || email.split('@')[0] || 'User',
+              email,
+              password,
+              ...(affiliateCode.trim() ? { affiliateCode: affiliateCode.trim() } : {}),
+            };
       const res = await fetch(`${BILLING_API}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
