@@ -470,7 +470,7 @@ export default function HomeChartsSection(props: Props) {
           >
             <PieBlock
               title="Einnahmen nach Kategorie"
-              subtitle="Summe der letzten Beträge je Position (Gehalt, Trinkgeld, Dividende, …) — gruppiert nach Kategorie, wie unter Money."
+              subtitle="Summe aller Einnahmen je Kategorie (alle Buchungen unter Money — z. B. mehrere Trinkgeld-Einträge werden addiert)."
               slices={props.incomePie}
             />
             <PieBlock

@@ -322,22 +322,54 @@ function formatIncomeTitle(tx: Transaction): string {
   return n || 'Ohne Notiz';
 }
 
-/** Pro Einnahme-Kategorie + Notiz die neueste Buchung. */
-function latestIncomeRows(transactions: Transaction[]): Transaction[] {
-  const rows = transactions.filter((t) => t.type === 'einnahme' && INCOME_CATEGORIES.has(t.category));
-  const map = new Map<string, Transaction>();
-  for (const t of rows) {
+function parseIncomeAmount(amount: string): number {
+  const n = Math.abs(parseFloat(String(amount).replace(/\s/g, '').replace(',', '.')));
+  return Number.isNaN(n) ? 0 : Math.round(n * 100) / 100;
+}
+
+function allIncomeTransactions(transactions: Transaction[]): Transaction[] {
+  return transactions.filter((t) => t.type === 'einnahme' && INCOME_CATEGORIES.has(t.category));
+}
+
+/** Pro Kategorie + Notiz: Summe aller Buchungen (für Money-Liste & Übersicht). */
+type IncomeAggRow = {
+  key: string;
+  category: string;
+  title: string;
+  sum: number;
+  count: number;
+  latest: Transaction;
+};
+
+function aggregatedIncomeRows(transactions: Transaction[]): IncomeAggRow[] {
+  const map = new Map<string, IncomeAggRow>();
+  for (const t of allIncomeTransactions(transactions)) {
     const key = incomeDedupeKey(t);
+    const add = parseIncomeAmount(t.amount);
+    if (add <= 0) continue;
     const prev = map.get(key);
-    if (!prev || compareTxRecency(prev, t) < 0) map.set(key, t);
+    if (!prev) {
+      map.set(key, {
+        key,
+        category: t.category,
+        title: formatIncomeTitle(t),
+        sum: add,
+        count: 1,
+        latest: t,
+      });
+    } else {
+      prev.sum = Math.round((prev.sum + add) * 100) / 100;
+      prev.count += 1;
+      if (compareTxRecency(prev.latest, t) < 0) prev.latest = t;
+    }
   }
-  return Array.from(map.values()).sort((a, b) => compareTxRecency(b, a));
+  return Array.from(map.values()).sort((a, b) => compareTxRecency(b.latest, a.latest));
 }
 
 function incomePieSlicesFromRows(rows: Transaction[]): { name: string; value: number }[] {
   const byCat = new Map<string, number>();
   for (const tx of rows) {
-    const v = Math.abs(parseFloat(String(tx.amount).replace(/\s/g, '').replace(',', '.'))) || 0;
+    const v = parseIncomeAmount(tx.amount);
     if (v <= 0) continue;
     byCat.set(tx.category, (byCat.get(tx.category) || 0) + v);
   }
@@ -1746,7 +1778,7 @@ export default function AllWin() {
     [fixedCostOverviewRows],
   );
   const variableCostOverviewRows = useMemo(() => latestVarCostRows(transactions), [transactions]);
-  const incomeOverviewRows = useMemo(() => latestIncomeRows(transactions), [transactions]);
+  const incomeOverviewRows = useMemo(() => aggregatedIncomeRows(transactions), [transactions]);
 
   const moneyTxMonthGroups = useMemo(() => {
     const bucket = new Map<string, { year: number; month0: number; txs: Transaction[] }>();
@@ -1786,12 +1818,8 @@ export default function AllWin() {
     [variableCostOverviewRows],
   );
   const incomeOverviewSum = useMemo(
-    () =>
-      incomeOverviewRows.reduce((s, t) => {
-        const n = Math.abs(parseFloat(String(t.amount).replace(',', '.')));
-        return s + (Number.isNaN(n) ? 0 : n);
-      }, 0),
-    [incomeOverviewRows],
+    () => Math.round(allIncomeTransactions(transactions).reduce((s, t) => s + parseIncomeAmount(t.amount), 0) * 100) / 100,
+    [transactions],
   );
   const chartFixedPie = useMemo(
     () =>
@@ -1813,7 +1841,7 @@ export default function AllWin() {
         .filter((x) => x.value > 0),
     [variableCostOverviewRows],
   );
-  const chartIncomePie = useMemo(() => incomePieSlicesFromRows(incomeOverviewRows), [incomeOverviewRows]);
+  const chartIncomePie = useMemo(() => incomePieSlicesFromRows(allIncomeTransactions(transactions)), [transactions]);
   const chartMarketPrices = useMemo(() => {
     const r: Record<string, number> = {};
     for (const m of market) r[m.sym] = m.price;
@@ -4667,7 +4695,7 @@ export default function AllWin() {
         {moneyFormOpen && (
         <>
         <div style={{ fontSize: 11, color: '#7d8590', marginTop: 4, marginBottom: 10 }}>
-          Zählt für Home und Jahresübersicht (Kalendermonat). Einnahmen (Gehalt, Trinkgeld, …): Liste „Einnahmen“ + Kreisdiagramm unter Übersicht. „Kreditrate“ + Schuld: Tilgung in Boost. Kategorie „Notgroschen“: Polster aufstocken. Zahlungsart „Notgroschen“: aus dem Polster zahlen. Zahlungsart „Cash Depot“: Broker-Cash abbuchen; „Einzahlung Cash Depot“: Broker-Cash aufstocken (Haushalt zählt weiter als Ausgabe). Abos/Miete/Kreditrate: „Laufende Fixkosten“; Essen, Fahrt, Kleidung u. a.: „Variable Kosten“ (jeweils letzter Betrag je Position).
+          Zählt für Home und Jahresübersicht (Kalendermonat). Einnahmen (Gehalt, Trinkgeld, …): Summe aller Buchungen in der Liste „Einnahmen“ + Kreisdiagramm unter Übersicht. „Kreditrate“ + Schuld: Tilgung in Boost. Kategorie „Notgroschen“: Polster aufstocken. Zahlungsart „Notgroschen“: aus dem Polster zahlen. Zahlungsart „Cash Depot“: Broker-Cash abbuchen; „Einzahlung Cash Depot“: Broker-Cash aufstocken (Haushalt zählt weiter als Ausgabe). Abos/Miete/Kreditrate: „Laufende Fixkosten“; Essen, Fahrt, Kleidung u. a.: „Variable Kosten“ (jeweils letzter Betrag je Position).
           {!debts.some((d) => d.remaining > 0) && (
             <span> Keine offene Schuld? Neuen Kredit oben rechts über ⋮ in Boost anlegen.</span>
           )}
@@ -4840,23 +4868,24 @@ export default function AllWin() {
           <>
             <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2, marginBottom: 12, lineHeight: 1.45 }}>
               Aus Einnahmen in <strong style={{ color: '#e6edf3' }}>Gehalt</strong>, <strong style={{ color: '#e6edf3' }}>Trinkgeld</strong>, <strong style={{ color: '#e6edf3' }}>Gutschrift</strong>, <strong style={{ color: '#e6edf3' }}>Geschenk</strong>, Dividende, Freelance, Nebenjob, Sonstiges. Je{' '}
-              <strong style={{ color: '#e6edf3' }}>Kategorie + Notizzeile</strong> die letzte Buchung — Verteilung nach Kategorie siehst du unter Tab{' '}
+              <strong style={{ color: '#e6edf3' }}>Kategorie + Notizzeile</strong> die <strong style={{ color: '#e6edf3' }}>Summe aller Buchungen</strong> — Kreisdiagramm nach Kategorie unter Tab{' '}
               <strong style={{ color: '#e6edf3' }}>Übersicht</strong>.
             </div>
             {incomeOverviewRows.length === 0 ? (
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>Noch keine Einnahmen gebucht.</div>
             ) : (
-              incomeOverviewRows.map((tx) => (
-                <div key={`inc-${incomeDedupeKey(tx)}`} style={{ ...S.txRow, marginBottom: 2 }}>
+              incomeOverviewRows.map((row) => (
+                <div key={`inc-${row.key}`} style={{ ...S.txRow, marginBottom: 2 }}>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700, letterSpacing: '0.04em', marginBottom: 2 }}>{tx.category}</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{formatIncomeTitle(tx)}</div>
+                    <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700, letterSpacing: '0.04em', marginBottom: 2 }}>{row.category}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{row.title}</div>
                     <div style={{ fontSize: 11, color: '#7d8590' }}>
-                      Zuletzt {formatTxDateLabel(tx.date)}
-                      {tx.paymentMethod ? ` · ${tx.paymentMethod}` : ''}
+                      {row.count > 1 ? `${row.count} Buchungen · ` : ''}
+                      Zuletzt {formatTxDateLabel(row.latest.date)}
+                      {row.latest.paymentMethod ? ` · ${row.latest.paymentMethod}` : ''}
                     </div>
                   </div>
-                  <div style={{ fontWeight: 800, color: '#2563eb', flexShrink: 0 }}>{fmt(+tx.amount)}</div>
+                  <div style={{ fontWeight: 800, color: '#2563eb', flexShrink: 0 }}>{fmt(row.sum)}</div>
                 </div>
               ))
             )}
@@ -4874,7 +4903,7 @@ export default function AllWin() {
                   flexWrap: 'wrap' as const,
                 }}
               >
-                <span>Summe (letzte Beträge je Position)</span>
+                <span>Summe (alle Einnahmen)</span>
                 <span style={{ fontWeight: 800, color: '#2563eb' }}>{fmt(incomeOverviewSum)}</span>
               </div>
             )}
