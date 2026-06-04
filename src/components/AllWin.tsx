@@ -2637,7 +2637,8 @@ export default function AllWin() {
 
   const showToast = (msg: string, type: 'success' | 'error' | 'level' = 'success') => {
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
+    const ms = type === 'error' ? 8000 : 3000;
+    setTimeout(() => setToast(null), ms);
   };
 
   useEffect(() => {
@@ -3842,7 +3843,25 @@ export default function AllWin() {
     debtCard: { background: awBg.card, borderRadius: 14, padding: 16, marginBottom: 10, border: `1px solid ${awBg.cardBorder}` },
     txRow: { display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${awBg.cardBorder}` },
     marketRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: `1px solid ${awBg.cardBorder}` },
-    toast: (type: 'success' | 'error' | 'level') => ({ position: 'fixed' as const, top: 20, left: '50%', transform: 'translateX(-50%)', background: type === 'level' ? 'linear-gradient(135deg,#7c3aed,#a855f7)' : type === 'error' ? '#cf222e' : '#2563eb', color: type === 'level' ? '#fff' : type === 'error' ? '#fff' : '#f0f7ff', padding: '12px 24px', borderRadius: 99, fontWeight: 700, fontSize: 14, zIndex: 999, boxShadow: '0 8px 32px rgba(0,0,0,0.5)', whiteSpace: 'nowrap' as const }),
+    toast: (type: 'success' | 'error' | 'level') => ({
+      position: 'fixed' as const,
+      top: 'max(12px, env(safe-area-inset-top, 0px))',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: 'calc(100% - 24px)',
+      maxWidth: 400,
+      background: type === 'level' ? 'linear-gradient(135deg,#7c3aed,#a855f7)' : type === 'error' ? '#cf222e' : '#2563eb',
+      color: type === 'level' ? '#fff' : type === 'error' ? '#fff' : '#f0f7ff',
+      padding: '12px 16px',
+      borderRadius: type === 'error' ? 14 : 99,
+      fontWeight: 700,
+      fontSize: 13,
+      lineHeight: 1.4,
+      zIndex: 999,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+      whiteSpace: type === 'error' ? ('normal' as const) : ('nowrap' as const),
+      textAlign: 'center' as const,
+    }),
     tabBar: {
       position: 'fixed' as const,
       left: '50%',

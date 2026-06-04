@@ -81,6 +81,25 @@ function parseReceiptDate(raw) {
   return null;
 }
 
+/** OpenAI-Fehler → kurze deutsche Meldung fürs Handy. */
+export function friendlyOpenAiError(message) {
+  const m = String(message || '').toLowerCase();
+  if (m.includes('quota') || m.includes('billing') || m.includes('insufficient') || m.includes('credit')) {
+    return 'OpenAI: Guthaben oder Zahlungsmethode fehlt — unter platform.openai.com → Settings → Billing Karte hinterlegen.';
+  }
+  if (m.includes('incorrect api key') || m.includes('invalid api key') || m.includes('api key')) {
+    return 'OpenAI API-Key ungültig — OPENAI_API_KEY auf Railway prüfen (neuen Key von platform.openai.com/api-keys).';
+  }
+  if (m.includes('model') && (m.includes('not found') || m.includes('does not exist') || m.includes('access'))) {
+    return 'KI-Modell nicht verfügbar — auf Railway RECEIPT_SCAN_MODEL=gpt-4o-mini setzen oder Billing bei OpenAI aktivieren.';
+  }
+  if (m.includes('rate limit')) {
+    return 'Zu viele Anfragen — bitte in einer Minute erneut versuchen.';
+  }
+  const short = String(message || 'Scan fehlgeschlagen.').slice(0, 220);
+  return short.length < String(message || '').length ? `${short}…` : short;
+}
+
 function extractJsonObject(text) {
   const raw = String(text || '').trim();
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -152,8 +171,8 @@ Regeln:
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.error?.message || `OpenAI Fehler (${res.status})`;
-    const err = new Error(msg);
+    const raw = data?.error?.message || `OpenAI Fehler (${res.status})`;
+    const err = new Error(friendlyOpenAiError(raw));
     err.code = 'OPENAI_ERROR';
     throw err;
   }
