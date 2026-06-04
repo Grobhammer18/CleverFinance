@@ -1731,7 +1731,8 @@ export default function AllWin() {
   const [moneyTxListExpanded, setMoneyTxListExpanded] = useState(true);
   const [moneyFormOpen, setMoneyFormOpen] = useState(() => !isMoneyCompactViewport());
   const [receiptScanning, setReceiptScanning] = useState(false);
-  const receiptInputRef = useRef<HTMLInputElement>(null);
+  const receiptCameraInputRef = useRef<HTMLInputElement>(null);
+  const receiptLibraryInputRef = useRef<HTMLInputElement>(null);
   const [moneyIncomeOpen, setMoneyIncomeOpen] = useState(() => !isMoneyCompactViewport());
   const [moneyFixedCostsOpen, setMoneyFixedCostsOpen] = useState(() => !isMoneyCompactViewport());
   const [moneyVarCostsOpen, setMoneyVarCostsOpen] = useState(() => !isMoneyCompactViewport());
@@ -4867,36 +4868,75 @@ export default function AllWin() {
       </div>
       {renderMoneyRecentTxList()}
       <input
-        ref={receiptInputRef}
+        ref={receiptCameraInputRef}
         type="file"
         accept="image/*"
         capture="environment"
         style={{ display: 'none' }}
         aria-hidden
+        tabIndex={-1}
+        onChange={onReceiptFilePicked}
+      />
+      <input
+        ref={receiptLibraryInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        aria-hidden
+        tabIndex={-1}
         onChange={onReceiptFilePicked}
       />
       <div style={{ ...S.card, marginBottom: 10 }}>
-        <button
-          type="button"
-          disabled={receiptScanning}
-          style={{
-            ...S.btn('#00d4aa'),
-            width: '100%',
-            opacity: receiptScanning ? 0.75 : 1,
-          }}
-          onClick={() => {
-            if (!authToken) {
-              showToast('Bitte anmelden, um Kassenzettel zu scannen.', 'error');
-              return;
-            }
-            receiptInputRef.current?.click();
-          }}
-        >
-          {receiptScanning ? '⏳ Beleg wird gelesen…' : '📷 Kassenzettel scannen'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
+          <button
+            type="button"
+            disabled={receiptScanning}
+            style={{
+              ...S.btn('#00d4aa'),
+              flex: '1 1 140px',
+              minWidth: 0,
+              opacity: receiptScanning ? 0.75 : 1,
+            }}
+            onClick={() => {
+              if (!authToken) {
+                showToast('Bitte anmelden, um Kassenzettel zu scannen.', 'error');
+                return;
+              }
+              receiptCameraInputRef.current?.click();
+            }}
+          >
+            {receiptScanning ? '⏳ …' : '📷 Foto'}
+          </button>
+          <button
+            type="button"
+            disabled={receiptScanning}
+            style={{
+              ...S.chip(false),
+              flex: '1 1 140px',
+              minWidth: 0,
+              padding: '12px 14px',
+              fontWeight: 700,
+              fontSize: 14,
+              opacity: receiptScanning ? 0.75 : 1,
+              border: '1px solid #30363d',
+            }}
+            onClick={() => {
+              if (!authToken) {
+                showToast('Bitte anmelden, um Kassenzettel zu scannen.', 'error');
+                return;
+              }
+              receiptLibraryInputRef.current?.click();
+            }}
+          >
+            {receiptScanning ? '⏳ …' : '🖼 Mediathek'}
+          </button>
+        </div>
+        {receiptScanning && (
+          <div style={{ fontSize: 12, color: '#00d4aa', marginTop: 8, fontWeight: 600 }}>Beleg wird gelesen…</div>
+        )}
         <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8, lineHeight: 1.45 }}>
-          Macht einen Vorschlag für Betrag, Datum und Händler — du bestätigst mit Speichern. Das Foto wird nicht
-          gespeichert.
+          Foto oder Bild aus der Mediathek — Vorschlag für Betrag, Datum und Händler. Du bestätigst mit Speichern. Das
+          Bild wird nicht in der App gespeichert.
         </div>
       </div>
       <div data-tour="money-form" style={S.card}>
