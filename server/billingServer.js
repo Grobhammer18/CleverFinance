@@ -17,6 +17,7 @@ import {
   FEEDBACK_KINDS,
 } from './db.js';
 import { mountAdminRoutes } from './adminRoutes.js';
+import { scanReceiptImage } from './receiptScan.js';
 
 const envPath = fs.existsSync('.env.local') ? '.env.local' : '.env';
 dotenv.config({ path: envPath });
@@ -325,7 +326,7 @@ app.post('/api/billing/webhook', express.raw({ type: 'application/json' }), (req
   }
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '8mb' }));
 
 app.get('/api/billing/health', (_req, res) => {
   res.json({ ok: true });
@@ -532,6 +533,27 @@ app.put('/api/user/state', (req, res) => {
   saveUser(updatedUser);
   const txCount = Array.isArray(nextState.transactions) ? nextState.transactions.length : 0;
   return res.json({ ok: true, clientSavedAt: nextSavedAt, transactionCount: txCount });
+});
+
+app.post('/api/receipt/scan', async (req, res) => {
+  const payload = getAuthPayload(req);
+  if (!payload) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const image = String(req.body?.image || '').trim();
+    const mimeType = String(req.body?.mimeType || 'image/jpeg').trim();
+    const suggestion = await scanReceiptImage({ imageBase64: image, mimeType });
+    recordEvent({ userId: payload.userId, eventType: 'receipt_scan', meta: { confidence: suggestion.confidence } });
+    return res.json({ ok: true, suggestion });
+  } catch (err) {
+    const code = err?.code;
+    if (code === 'NOT_CONFIGURED') {
+      return res.status(503).json({
+        error: 'Kassenzettel-Scan ist noch nicht konfiguriert (OPENAI_API_KEY auf Railway setzen).',
+      });
+    }
+    console.error('[receipt] scan failed:', err?.message || err);
+    return res.status(400).json({ error: err?.message || 'Scan fehlgeschlagen.' });
+  }
 });
 
 app.post('/api/analytics/ping', (req, res) => {

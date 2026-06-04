@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+} from 'react';
 import { flushSync } from 'react-dom';
 import OnboardingWizard from './OnboardingWizard';
 import type { LevelUpMode, OnboardingV2Payload } from '../onboarding/onboardingLogic';
@@ -409,6 +418,40 @@ function debtEquity(d: Debt): number | null {
 
 function todayIsoDate() {
   return new Date().toLocaleDateString('sv-SE');
+}
+
+/** Kassenzettel-Foto für API verkleinern (max. Kantenlänge, JPEG). */
+async function compressReceiptImageFile(file: File): Promise<{ base64: string; mimeType: string }> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('Bild konnte nicht geladen werden.'));
+      el.src = url;
+    });
+    const maxDim = 1600;
+    let w = img.naturalWidth;
+    let h = img.naturalHeight;
+    if (!w || !h) throw new Error('Bild hat keine Größe.');
+    if (w > maxDim || h > maxDim) {
+      const ratio = Math.min(maxDim / w, maxDim / h);
+      w = Math.round(w * ratio);
+      h = Math.round(h * ratio);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Vorschau nicht möglich.');
+    ctx.drawImage(img, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    const base64 = dataUrl.split(',')[1] || '';
+    if (!base64) throw new Error('Komprimierung fehlgeschlagen.');
+    return { base64, mimeType: 'image/jpeg' };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 type FormState = {
@@ -1687,6 +1730,8 @@ export default function AllWin() {
   const prevPortfolioPowerForMilestoneRef = useRef<number | null>(null);
   const [moneyTxListExpanded, setMoneyTxListExpanded] = useState(true);
   const [moneyFormOpen, setMoneyFormOpen] = useState(() => !isMoneyCompactViewport());
+  const [receiptScanning, setReceiptScanning] = useState(false);
+  const receiptInputRef = useRef<HTMLInputElement>(null);
   const [moneyIncomeOpen, setMoneyIncomeOpen] = useState(() => !isMoneyCompactViewport());
   const [moneyFixedCostsOpen, setMoneyFixedCostsOpen] = useState(() => !isMoneyCompactViewport());
   const [moneyVarCostsOpen, setMoneyVarCostsOpen] = useState(() => !isMoneyCompactViewport());
@@ -2931,6 +2976,74 @@ export default function AllWin() {
       paymentMethod: '',
       linkedDebtId: '',
     });
+  };
+
+  const onReceiptFilePicked = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!BILLING_API) {
+      showToast('Backend nicht erreichbar — Billing-Server / VITE_BILLING_API_URL prüfen.', 'error');
+      return;
+    }
+    if (!authToken) {
+      showToast('Bitte anmelden, um Kassenzettel zu scannen.', 'error');
+      return;
+    }
+    setReceiptScanning(true);
+    try {
+      const { base64, mimeType } = await compressReceiptImageFile(file);
+      const res = await fetch(`${BILLING_API}/api/receipt/scan`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ image: base64, mimeType }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        suggestion?: {
+          amount: number;
+          date?: string;
+          note?: string;
+          category?: string;
+          paymentMethod?: string;
+          confidence?: string;
+        };
+      };
+      if (!res.ok) {
+        showToast(data?.error || 'Scan fehlgeschlagen.', 'error');
+        return;
+      }
+      const s = data.suggestion;
+      if (!s?.amount) {
+        showToast('Keine Buchungsdaten erkannt.', 'error');
+        return;
+      }
+      const cat = s.category && CATS.ausgaben.includes(s.category) ? s.category : 'Sonstiges';
+      const pm = String(s.paymentMethod || '');
+      const pmOk = (PAYMENT_METHOD_OPTIONS as readonly string[]).includes(pm) ? pm : '';
+      setEditingTxId(null);
+      setForm((f) => ({
+        ...f,
+        type: 'ausgabe',
+        amount: String(s.amount),
+        date: s.date && /^\d{4}-\d{2}-\d{2}/.test(s.date) ? s.date : f.date,
+        category: cat,
+        note: String(s.note || '').trim().slice(0, 200),
+        paymentMethod: pmOk,
+        linkedDebtId: cat === 'Kreditrate' ? f.linkedDebtId : '',
+      }));
+      setMoneyFormOpen(true);
+      const conf =
+        s.confidence === 'high' ? 'sicher' : s.confidence === 'low' ? 'unsicher — bitte prüfen' : 'plausibel';
+      showToast(`Kassenzettel erkannt (${conf}). Daten prüfen und speichern.`, s.confidence === 'low' ? 'error' : 'success');
+    } catch {
+      showToast('Beleg konnte nicht gelesen werden — anderes Foto versuchen.', 'error');
+    } finally {
+      setReceiptScanning(false);
+    }
   };
 
   const deleteTx = async (id: number) => {
@@ -4734,6 +4847,39 @@ export default function AllWin() {
         </div>
       </div>
       {renderMoneyRecentTxList()}
+      <input
+        ref={receiptInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: 'none' }}
+        aria-hidden
+        onChange={onReceiptFilePicked}
+      />
+      <div style={{ ...S.card, marginBottom: 10 }}>
+        <button
+          type="button"
+          disabled={receiptScanning}
+          style={{
+            ...S.btn('#00d4aa'),
+            width: '100%',
+            opacity: receiptScanning ? 0.75 : 1,
+          }}
+          onClick={() => {
+            if (!authToken) {
+              showToast('Bitte anmelden, um Kassenzettel zu scannen.', 'error');
+              return;
+            }
+            receiptInputRef.current?.click();
+          }}
+        >
+          {receiptScanning ? '⏳ Beleg wird gelesen…' : '📷 Kassenzettel scannen'}
+        </button>
+        <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8, lineHeight: 1.45 }}>
+          Macht einen Vorschlag für Betrag, Datum und Händler — du bestätigst mit Speichern. Das Foto wird nicht
+          gespeichert.
+        </div>
+      </div>
       <div data-tour="money-form" style={S.card}>
         <button
           type="button"
