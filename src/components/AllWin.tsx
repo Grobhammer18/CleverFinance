@@ -1617,8 +1617,11 @@ export default function AllWin() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [legalSheet, setLegalSheet] = useState<null | 'impressum' | 'rechtlich' | 'disclaimer'>(null);
   const [profileSection, setProfileSection] = useState<
-    'overview' | 'subscription' | 'personal' | 'notifications' | 'redeem' | 'orden'
+    'overview' | 'subscription' | 'personal' | 'notifications' | 'feedback' | 'redeem' | 'orden'
   >('overview');
+  const [feedbackKind, setFeedbackKind] = useState<'bug' | 'improve' | 'feature' | 'other'>('improve');
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [feedbackSending, setFeedbackSending] = useState(false);
   const [notifSettings, setNotifSettings] = useState({
     suspiciousCharges: true,
     subscriptionChanges: true,
@@ -3441,6 +3444,40 @@ export default function AllWin() {
       showToast('Profil-Update fehlgeschlagen.', 'error');
     } finally {
       setProfileSaving(false);
+    }
+  };
+
+  const submitFeedback = async () => {
+    if (!authToken || !BILLING_API) {
+      showToast('Bitte einloggen, um Feedback zu senden.', 'error');
+      return;
+    }
+    const message = feedbackMessage.trim();
+    if (message.length < 8) {
+      showToast('Bitte etwas ausführlicher schreiben (min. 8 Zeichen).', 'error');
+      return;
+    }
+    setFeedbackSending(true);
+    try {
+      const res = await fetch(`${BILLING_API}/api/feedback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ kind: feedbackKind, message }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(typeof data?.error === 'string' ? data.error : 'Feedback konnte nicht gesendet werden.', 'error');
+        return;
+      }
+      setFeedbackMessage('');
+      showToast('Danke! Dein Feedback ist angekommen. 🙏');
+    } catch {
+      showToast('Server nicht erreichbar — bitte später erneut versuchen.', 'error');
+    } finally {
+      setFeedbackSending(false);
     }
   };
 
@@ -6076,6 +6113,7 @@ export default function AllWin() {
           [
             ['personal', '👤 Persönliche Angaben'],
             ['notifications', '🔔 Mitteilungen'],
+            ['feedback', '💬 Feedback & Wünsche'],
             ['orden', '🎖️ Meine Orden'],
             ['redeem', '🎁 Code einlösen'],
           ] as const
@@ -6221,6 +6259,67 @@ export default function AllWin() {
               <option value="d">divers</option>
             </select>
           </div>
+        </div>
+      )}
+
+      {profileSection === 'feedback' && (
+        <div style={{ ...S.card, border: '1px solid #58a6ff55' }}>
+          <div style={S.label}>💬 Feedback & Wünsche</div>
+          <div style={{ fontSize: 12, color: '#7d8590', marginTop: 6, marginBottom: 14, lineHeight: 1.5 }}>
+            Was funktioniert nicht? Was können wir besser machen? Was wünschst du dir noch? Dein Text geht direkt an uns (Beta).
+          </div>
+          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>Kategorie</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+            {(
+              [
+                ['bug', '🐛 Funktioniert nicht'],
+                ['improve', '✨ Verbesserung'],
+                ['feature', '💡 Wunsch / Feature'],
+                ['other', '💬 Sonstiges'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                style={{
+                  ...S.chip(feedbackKind === id),
+                  padding: '8px 12px',
+                  fontSize: 12,
+                  flex: '1 1 auto',
+                  minWidth: 'calc(50% - 4px)',
+                }}
+                onClick={() => setFeedbackKind(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>Deine Nachricht</div>
+          <textarea
+            style={{
+              ...S.input,
+              width: '100%',
+              minHeight: 140,
+              resize: 'vertical' as const,
+              lineHeight: 1.45,
+              fontFamily: 'inherit',
+            }}
+            placeholder="z. B. Sync zwischen iPhone und PC, fehlende Funktion, Idee für Boost …"
+            value={feedbackMessage}
+            onChange={(e) => setFeedbackMessage(e.target.value)}
+            maxLength={8000}
+          />
+          <div style={{ fontSize: 11, color: '#6e7681', marginTop: 6, textAlign: 'right' as const }}>
+            {feedbackMessage.trim().length} / 8000
+          </div>
+          <button
+            type="button"
+            style={{ ...S.btn('#2563eb'), marginTop: 12, opacity: feedbackSending ? 0.7 : 1 }}
+            onClick={() => void submitFeedback()}
+            disabled={feedbackSending}
+          >
+            {feedbackSending ? '⏳ Wird gesendet…' : '📨 Feedback absenden'}
+          </button>
         </div>
       )}
 

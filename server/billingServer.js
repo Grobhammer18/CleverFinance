@@ -28,9 +28,11 @@ const appleIssuer = 'https://appleid.apple.com';
 const appleJwks = createRemoteJWKSet(new URL('https://appleid.apple.com/auth/keys'));
 const dataDir = path.resolve('server/data');
 const usersFile = path.join(dataDir, 'users.json');
+const feedbackFile = path.join(dataDir, 'feedback.json');
 
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 if (!fs.existsSync(usersFile)) fs.writeFileSync(usersFile, JSON.stringify({ users: [] }, null, 2));
+if (!fs.existsSync(feedbackFile)) fs.writeFileSync(feedbackFile, JSON.stringify({ entries: [] }, null, 2));
 
 function loadUsers() {
   try {
@@ -44,6 +46,21 @@ function loadUsers() {
 function saveUsers(users) {
   fs.writeFileSync(usersFile, JSON.stringify({ users }, null, 2));
 }
+
+function loadFeedbackEntries() {
+  try {
+    const data = JSON.parse(fs.readFileSync(feedbackFile, 'utf8'));
+    return Array.isArray(data.entries) ? data.entries : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFeedbackEntries(entries) {
+  fs.writeFileSync(feedbackFile, JSON.stringify({ entries }, null, 2));
+}
+
+const FEEDBACK_KINDS = new Set(['bug', 'improve', 'feature', 'other']);
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
@@ -532,6 +549,41 @@ app.put('/api/user/state', (req, res) => {
   saveUsers(users);
   const txCount = Array.isArray(nextState.transactions) ? nextState.transactions.length : 0;
   return res.json({ ok: true, clientSavedAt: nextSavedAt, transactionCount: txCount });
+});
+
+app.post('/api/feedback', (req, res) => {
+  const payload = getAuthPayload(req);
+  if (!payload) return res.status(401).json({ error: 'Unauthorized' });
+  const users = loadUsers();
+  const user = users.find((u) => u.id === payload.userId);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+  const kind = String(req.body?.kind || 'other').trim();
+  const message = String(req.body?.message || '').trim();
+  if (!FEEDBACK_KINDS.has(kind)) {
+    return res.status(400).json({ error: 'Ungültige Kategorie.' });
+  }
+  if (message.length < 8) {
+    return res.status(400).json({ error: 'Bitte mindestens 8 Zeichen schreiben.' });
+  }
+  if (message.length > 8000) {
+    return res.status(400).json({ error: 'Nachricht ist zu lang (max. 8000 Zeichen).' });
+  }
+
+  const entry = {
+    id: crypto.randomUUID(),
+    userId: user.id,
+    email: user.email,
+    name: user.name || '',
+    kind,
+    message,
+    createdAt: new Date().toISOString(),
+  };
+  const entries = loadFeedbackEntries();
+  entries.push(entry);
+  saveFeedbackEntries(entries.slice(-2000));
+  console.log(`[feedback] ${kind} from ${user.email} (${entry.id})`);
+  return res.json({ ok: true, id: entry.id });
 });
 
 app.post('/api/billing/create-checkout-session', async (req, res) => {
