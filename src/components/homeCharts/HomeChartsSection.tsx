@@ -102,6 +102,7 @@ function YearMoneyOverviewCard(props: {
 }
 
 const chartMargins = { top: 6, right: 8, bottom: 0, left: 0 };
+const wealthChartMargins = { top: 12, right: 8, bottom: 4, left: 0 };
 
 type Props = {
   transactions: ChartTx[];
@@ -389,7 +390,7 @@ export default function HomeChartsSection(props: Props) {
             }
           >
             <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={wealthDisplay} margin={chartMargins}>
+              <LineChart data={wealthDisplay} margin={wealthChartMargins}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: '#8b949e', fontSize: 10 }} ticks={xTicks} interval={0} />
                 <YAxis
@@ -522,8 +523,8 @@ function ChartBlock({
   return (
     <div style={{ marginBottom: 22 }}>
       <div style={{ fontSize: 13, fontWeight: 800, color: '#e6edf3', marginBottom: 6 }}>{title}</div>
-      <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 12, lineHeight: 1.45 }}>{subtitle}</div>
-      {children}
+      <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 10, lineHeight: 1.45 }}>{subtitle}</div>
+      <div style={{ marginTop: 16 }}>{children}</div>
     </div>
   );
 }
