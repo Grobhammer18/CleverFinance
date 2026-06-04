@@ -4413,6 +4413,7 @@ export default function AllWin() {
       </div>
       <HomeChartsSection
         standalonePage
+        levelUpLocked={levelUpLocked}
         moneyYearOverview={{ reportYear, buckets: monthlyBuckets, levelUpLocked, formatMoney: fmt }}
         transactions={transactions}
         debts={debts.map((d) => ({

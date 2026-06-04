@@ -14,7 +14,16 @@ import {
 } from 'recharts';
 import { allwinPalette as aw } from '../../theme/allwinPalette';
 import DebtPaydownCurve from './DebtPaydownCurve';
-import { resolveHomeChartSeries, type PieSlice, type ChartTx, type ChartDebt, type ChartPortfolioTrade, type WealthLinePt, type DailyVermogenSnapshot } from './homeChartData';
+import {
+  resolveHomeChartSeries,
+  saldoKomplettFromParts,
+  type PieSlice,
+  type ChartTx,
+  type ChartDebt,
+  type ChartPortfolioTrade,
+  type WealthLinePt,
+  type DailyVermogenSnapshot,
+} from './homeChartData';
 
 const EUR_FMT = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 
@@ -114,6 +123,8 @@ type Props = {
   };
   /** Eigene Navigation-Seite: kein Aufklappen, Heading oben fest. */
   standalonePage?: boolean;
+  /** LevelUp gesperrt (Schulden/Notgroschen): kein Portfolio-Chart, Vermögenslinie ohne Portfolio. */
+  levelUpLocked?: boolean;
 };
 
 /** Eine Linie im Chart; Tooltip: Schulden-Zeile nur, wenn dieser Stichtag noch Restschuld hatte. */
@@ -124,10 +135,9 @@ function WealthKomplettTooltip({ active, payload, label }: { active?: boolean; p
   const rowBg = '#161b22';
   const hadDebtHere = row.schulden > 0.5;
   const hadImmoHere = row.immobilienWert > 0.5;
-  const lineSub: Array<[string, number, string]> = [
-    ['Notgroschen', row.notgroschen, '#5b93ff'],
-    ['Portfolio inkl. Cash', row.portfolioPlusCash, '#a855f7'],
-  ];
+  const hadPortfolioHere = row.portfolioPlusCash > 0.5;
+  const lineSub: Array<[string, number, string]> = [['Notgroschen', row.notgroschen, '#5b93ff']];
+  if (hadPortfolioHere) lineSub.push(['Portfolio inkl. Cash', row.portfolioPlusCash, '#a855f7']);
   if (hadImmoHere) lineSub.push(['Immobilien (Marktwert)', row.immobilienWert, '#2563eb']);
   if (hadDebtHere) lineSub.push(['Schulden (Rest)', row.schulden, '#f0883e']);
   return (
@@ -147,11 +157,17 @@ function WealthKomplettTooltip({ active, payload, label }: { active?: boolean; p
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${aw.line}` }}>
         <span style={{ width: 10, height: 10, borderRadius: 2, background: '#00d4aa', flexShrink: 0 }} />
         <span style={{ color: '#8b949e' }}>
-          {hadImmoHere
-            ? 'Gesamt (NG + Portfolio + Immobilien − Schulden):'
-            : hadDebtHere
-              ? 'Gesamt (NG + Portfolio − Schulden):'
-              : 'Gesamt (Notgroschen + Portfolio):'}
+          {hadPortfolioHere
+            ? hadImmoHere
+              ? 'Gesamt (NG + Portfolio + Immobilien − Schulden):'
+              : hadDebtHere
+                ? 'Gesamt (NG + Portfolio − Schulden):'
+                : 'Gesamt (Notgroschen + Portfolio):'
+            : hadImmoHere
+              ? 'Gesamt (NG + Immobilien − Schulden):'
+              : hadDebtHere
+                ? 'Gesamt (Notgroschen − Schulden):'
+                : 'Gesamt (Notgroschen):'}
         </span>{' '}
         <strong style={{ color: '#00d4aa' }}>{EUR_FMT.format(row.saldoKomplett)}</strong>
       </div>
@@ -258,11 +274,20 @@ export default function HomeChartsSection(props: Props) {
 
   const wealthLen = wealth.length;
   const standalone = props.standalonePage ?? false;
+  const levelUpLocked = props.levelUpLocked ?? props.moneyYearOverview?.levelUpLocked ?? false;
+  const wealthDisplay = useMemo((): WealthLinePt[] => {
+    if (!levelUpLocked) return wealth;
+    return wealth.map((w) => ({
+      ...w,
+      portfolioPlusCash: 0,
+      saldoKomplett: saldoKomplettFromParts(w.notgroschen, 0, w.schulden, w.immobilienWert ?? 0),
+    }));
+  }, [wealth, levelUpLocked]);
   const [open, setOpen] = useState(true);
 
   /** reduzierte X-Ticks bei langen Reihen */
   const tickEvery = wealthLen > (isDailySnapshotSeries ? 28 : 14) ? Math.ceil(wealthLen / (isDailySnapshotSeries ? 12 : 10)) : 1;
-  const xTicks = useMemo(() => wealth.filter((_, i) => i % tickEvery === 0).map((w) => w.label), [wealth, tickEvery]);
+  const xTicks = useMemo(() => wealthDisplay.filter((_, i) => i % tickEvery === 0).map((w) => w.label), [wealthDisplay, tickEvery]);
 
   const lineCommon = {
     type: 'monotone' as const,
@@ -354,13 +379,17 @@ export default function HomeChartsSection(props: Props) {
           <ChartBlock
             title="Komplette Vermögensübersicht"
             subtitle={
-              isDailySnapshotSeries
-                ? 'Eine Linie: Notgroschen + Portfolio + Immobilien (Marktwert aus Boost) − Schulden pro Tag. Tooltip: Detail je Stichtag.'
-                : 'Eine Linie: Notgroschen + Portfolio + Immobilien (Marktwert Hauskredit in Boost) − Schulden. Monat anfahren für Einzelteile; ab 2 Tages-Snapshots tägliche Kurve.'
+              levelUpLocked
+                ? isDailySnapshotSeries
+                  ? 'Notgroschen + Immobilien (Boost) − Schulden — Portfolio erst nach Freischaltung von LevelUp.'
+                  : 'Notgroschen + Immobilien (Boost) − Schulden. Portfolio fließt ein, sobald LevelUp frei ist.'
+                : isDailySnapshotSeries
+                  ? 'Eine Linie: Notgroschen + Portfolio + Immobilien (Marktwert aus Boost) − Schulden pro Tag. Tooltip: Detail je Stichtag.'
+                  : 'Eine Linie: Notgroschen + Portfolio + Immobilien (Marktwert Hauskredit in Boost) − Schulden. Monat anfahren für Einzelteile; ab 2 Tages-Snapshots tägliche Kurve.'
             }
           >
             <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={wealth} margin={chartMargins}>
+              <LineChart data={wealthDisplay} margin={chartMargins}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
                 <XAxis dataKey="label" tick={{ fill: '#8b949e', fontSize: 10 }} ticks={xTicks} interval={0} />
                 <YAxis
@@ -376,7 +405,7 @@ export default function HomeChartsSection(props: Props) {
                   dot={false}
                   strokeWidth={3}
                   activeDot={{ r: 5 }}
-                  name="NG + Portfolio + Immobilien − Schulden"
+                  name={levelUpLocked ? 'NG + Immobilien − Schulden' : 'NG + Portfolio + Immobilien − Schulden'}
                   dataKey="saldoKomplett"
                   stroke="#00d4aa"
                 />
@@ -384,32 +413,50 @@ export default function HomeChartsSection(props: Props) {
             </ResponsiveContainer>
           </ChartBlock>
 
-          <ChartBlock
-            title="Portfolio Power + Cash"
-            subtitle={
-              isDailySnapshotSeries
-                ? 'Portfolio inkl. Cash Depot zum Tages-Stichtag (wie unter „Komplette Vermögensübersicht“ gespeichert).'
-                : 'Investierter Wert (heutige Kurse) plus Cash Depot zum Monatsende.'
-            }
-          >
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={portfolioOnly} margin={chartMargins}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
-                <XAxis dataKey="label" tick={{ fill: '#8b949e', fontSize: 10 }} ticks={xTicks} interval={0} />
-                <YAxis
-                  tick={{ fill: '#8b949e', fontSize: 10 }}
-                  tickFormatter={(v) => `${Math.round(Number(v) / 1000)}k`}
-                  width={32}
-                />
-                <Tooltip
-                  formatter={(value: number) => [EUR_FMT.format(Number(value)), 'Portfolio + Cash']}
-                  labelStyle={{ color: '#c9d1d9' }}
-                  contentStyle={{ background: '#161b22', border: `1px solid ${aw.line}`, borderRadius: 8 }}
-                />
-                <Line {...lineCommon} dataKey="value" name="EUR" stroke="#a855f7" />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartBlock>
+          {levelUpLocked ? (
+            <div
+              style={{
+                padding: '14px 16px',
+                borderRadius: 12,
+                background: 'rgba(124, 58, 237, 0.08)',
+                border: '1px solid #7c3aed44',
+                marginBottom: 8,
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#c9d1d9', marginBottom: 6 }}>💎 Portfolio Power + Cash</div>
+              <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.5 }}>
+                Erst sichtbar, wenn LevelUp freigeschaltet ist (z. B. Schulden abgebaut oder Notgroschen-Ziel erreicht — je nach deinem Modus). Bis dahin zählen nur
+                Notgroschen, Immobilien-Marktwert und Schulden in der Vermögensübersicht.
+              </div>
+            </div>
+          ) : (
+            <ChartBlock
+              title="Portfolio Power + Cash"
+              subtitle={
+                isDailySnapshotSeries
+                  ? 'Portfolio inkl. Cash Depot zum Tages-Stichtag (wie unter „Komplette Vermögensübersicht“ gespeichert).'
+                  : 'Investierter Wert (heutige Kurse) plus Cash Depot zum Monatsende.'
+              }
+            >
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={portfolioOnly} margin={chartMargins}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#30363d" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fill: '#8b949e', fontSize: 10 }} ticks={xTicks} interval={0} />
+                  <YAxis
+                    tick={{ fill: '#8b949e', fontSize: 10 }}
+                    tickFormatter={(v) => `${Math.round(Number(v) / 1000)}k`}
+                    width={32}
+                  />
+                  <Tooltip
+                    formatter={(value: number) => [EUR_FMT.format(Number(value)), 'Portfolio + Cash']}
+                    labelStyle={{ color: '#c9d1d9' }}
+                    contentStyle={{ background: '#161b22', border: `1px solid ${aw.line}`, borderRadius: 8 }}
+                  />
+                  <Line {...lineCommon} dataKey="value" name="EUR" stroke="#a855f7" />
+                </LineChart>
+              </ResponsiveContainer>
+            </ChartBlock>
+          )}
 
           <div
             style={{
