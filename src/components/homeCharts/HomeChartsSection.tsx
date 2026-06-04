@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
   Cell,
@@ -199,8 +199,25 @@ function WealthDetailPanel({ row, onClose }: { row: WealthLinePt; onClose: () =>
   );
 }
 
+function normalizeWealthRow(row: WealthLinePt): WealthLinePt {
+  const immo = row.immobilienWert ?? 0;
+  const ng = row.notgroschen ?? 0;
+  const port = row.portfolioPlusCash ?? 0;
+  const sch = row.schulden ?? 0;
+  return {
+    ...row,
+    notgroschen: ng,
+    portfolioPlusCash: port,
+    immobilienWert: immo,
+    schulden: sch,
+    saldoKomplett: row.saldoKomplett ?? saldoKomplettFromParts(ng, port, sch, immo),
+  };
+}
+
 type WealthChartClickState = {
   activePayload?: ReadonlyArray<{ payload?: WealthLinePt }>;
+  activeTooltipIndex?: number;
+  activeLabel?: string;
 };
 
 function PieTooltip({ active, payload }: { active?: boolean; payload?: readonly { payload?: PieSlice & { pct?: number } }[] }) {
@@ -306,9 +323,11 @@ export default function HomeChartsSection(props: Props) {
     }));
   }, [wealth, levelUpLocked]);
 
+  const wealthDataSignature = useMemo(() => wealthDisplay.map((w) => w.ym).join('|'), [wealthDisplay]);
+
   useEffect(() => {
     setWealthDetail(null);
-  }, [wealthDisplay]);
+  }, [wealthDataSignature]);
 
   useEffect(() => {
     if (!wealthDetail || !wealthDetailRef.current) return;
@@ -318,10 +337,24 @@ export default function HomeChartsSection(props: Props) {
     return () => window.clearTimeout(t);
   }, [wealthDetail]);
 
-  const pickWealthPoint = (state: WealthChartClickState | null | undefined) => {
-    const row = state?.activePayload?.[0]?.payload;
-    if (row) setWealthDetail(row);
-  };
+  const selectWealthRow = useCallback((row: WealthLinePt | null | undefined) => {
+    if (row) setWealthDetail(normalizeWealthRow(row));
+  }, []);
+
+  const pickWealthPoint = useCallback(
+    (state: WealthChartClickState | null | undefined) => {
+      if (!state) return;
+      let row = state.activePayload?.[0]?.payload;
+      if (!row && typeof state.activeTooltipIndex === 'number') {
+        row = wealthDisplay[state.activeTooltipIndex];
+      }
+      if (!row && state.activeLabel) {
+        row = wealthDisplay.find((w) => w.label === state.activeLabel);
+      }
+      selectWealthRow(row);
+    },
+    [wealthDisplay, selectWealthRow],
+  );
 
   const [open, setOpen] = useState(true);
 
@@ -425,8 +458,8 @@ export default function HomeChartsSection(props: Props) {
                   ? 'Notgroschen + Immobilien (Boost) − Schulden — Portfolio erst nach Freischaltung von LevelUp.'
                   : 'Notgroschen + Immobilien (Boost) − Schulden. Portfolio fließt ein, sobald LevelUp frei ist.'
                 : isDailySnapshotSeries
-                  ? 'Tippen auf einen Punkt — Details erscheinen unter dem Diagramm (weitere Punkte weiter anklickbar).'
-                  : 'Tippen auf einen Monat — Details unter dem Diagramm. Ab 2 Tages-Snapshots tägliche Kurve.'
+                  ? 'Punkt oder Stichtag-Button antippen — Details darunter. Auf dem iPhone sind die Buttons am zuverlässigsten.'
+                  : 'Punkt oder Stichtag-Button — Details unter dem Diagramm.'
             }
           >
             <ResponsiveContainer width="100%" height={260}>
@@ -447,23 +480,31 @@ export default function HomeChartsSection(props: Props) {
                 <Legend wrapperStyle={{ color: '#c9d1d9', fontSize: 11, paddingTop: 8 }} />
                 <Line
                   type="monotone"
-                  dot={(dotProps: { cx?: number; cy?: number; payload?: WealthLinePt }) => {
-                    const { cx, cy, payload } = dotProps;
+                  isAnimationActive={false}
+                  dot={(dotProps: { cx?: number; cy?: number; payload?: WealthLinePt; index?: number }) => {
+                    const { cx, cy, payload, index } = dotProps;
                     if (cx == null || cy == null) return null;
+                    const row = payload ?? (typeof index === 'number' ? wealthDisplay[index] : undefined);
+                    const pick = () => selectWealthRow(row);
                     return (
-                      <circle
-                        cx={cx}
-                        cy={cy}
-                        r={5}
-                        fill="#0d1117"
-                        stroke="#00d4aa"
-                        strokeWidth={2}
-                        style={{ cursor: 'pointer' }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (payload) setWealthDetail(payload);
-                        }}
-                      />
+                      <g>
+                        <circle
+                          cx={cx}
+                          cy={cy}
+                          r={18}
+                          fill="transparent"
+                          style={{ cursor: 'pointer', touchAction: 'manipulation' }}
+                          onPointerUp={(e) => {
+                            e.stopPropagation();
+                            pick();
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            pick();
+                          }}
+                        />
+                        <circle cx={cx} cy={cy} r={5} fill="#0d1117" stroke="#00d4aa" strokeWidth={2} pointerEvents="none" />
+                      </g>
                     );
                   }}
                   strokeWidth={3}
@@ -474,12 +515,44 @@ export default function HomeChartsSection(props: Props) {
                 />
               </LineChart>
             </ResponsiveContainer>
+            {wealthDisplay.length > 0 ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, fontWeight: 700, letterSpacing: '0.04em' }}>
+                  STICHTAG WÄHLEN
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {wealthDisplay.map((pt) => {
+                    const selected = wealthDetail?.ym === pt.ym;
+                    return (
+                      <button
+                        key={pt.ym}
+                        type="button"
+                        onClick={() => selectWealthRow(pt)}
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          border: selected ? '1px solid #00d4aa' : `1px solid ${aw.line}`,
+                          background: selected ? 'rgba(0, 212, 170, 0.14)' : '#161b22',
+                          color: selected ? '#00d4aa' : '#c9d1d9',
+                          fontSize: 12,
+                          fontWeight: selected ? 800 : 600,
+                          cursor: 'pointer',
+                          touchAction: 'manipulation',
+                        }}
+                      >
+                        {pt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             <div ref={wealthDetailRef} style={{ marginTop: 14 }}>
               {wealthDetail ? (
                 <WealthDetailPanel row={wealthDetail} onClose={() => setWealthDetail(null)} />
               ) : (
                 <div style={{ fontSize: 11, color: '#6e7681', textAlign: 'center' as const, padding: '6px 0 2px' }}>
-                  Punkt auf der Linie antippen — Einzelheiten erscheinen hier.
+                  Punkt oder Stichtag antippen — Einzelheiten erscheinen hier.
                 </div>
               )}
             </div>
