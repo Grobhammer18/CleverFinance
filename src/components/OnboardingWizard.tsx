@@ -730,7 +730,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                   <div key={i} style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
                     <input
                       style={W.input}
-                      placeholder="Name / ISIN"
+                      placeholder="Name (z. B. Apple, MSCI World)"
                       value={s.name}
                       onChange={(e) => setStocks((prev) => prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
                     />

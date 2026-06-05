@@ -2671,7 +2671,10 @@ export default function AllWin() {
     const watchlistOnly = opts?.watchlistOnly === true;
     const sym = sanitizeWatchlistSymbol(wlAddSym);
     if (!sym) {
-      showToast('Ticker ungültig — nur Buchstaben, Zahlen und Punkt (max. 12 Zeichen).', 'error');
+      showToast(
+        'Bitte Börsen-Kürzel eingeben (z. B. AAPL, SAP, BTC) — keine ISIN. Max. 12 Zeichen.',
+        'error',
+      );
       return;
     }
     if (BASE_SYM_SET.has(sym)) {
@@ -3920,27 +3923,46 @@ export default function AllWin() {
       }}
     >
       <div style={{ fontSize: 11, fontWeight: 800, color: '#c9d1d9', marginBottom: 8 }}>Neues Instrument</div>
-      <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
+      <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 10, lineHeight: 1.45 }}>
         {opts?.watchlistOnly ? (
-          <>Nur unter <strong style={{ color: '#c9d1d9' }}>Live Marktdaten</strong> zur Beobachtung — Kurs simuliert, kein automatischer Eintrag unter Portfolio Power / Order.</>
+          <>
+            Nur Beobachtung unter <strong style={{ color: '#c9d1d9' }}>Live Marktdaten</strong> — Kurs simuliert, kein Eintrag unter
+            Portfolio Power / Order. <strong style={{ color: '#c9d1d9' }}>Börsen-Kürzel</strong> eintragen (z. B. AAPL, SAP), nicht die
+            ISIN.
+          </>
         ) : (
-          <>Ticker + Art — Kurs simuliert; Aktien-Logo FMP, Krypto über Cryptocurrency-Icons. Erscheint in der Liste für Orders.</>
+          <>
+            <strong style={{ color: '#c9d1d9' }}>Börsen-Kürzel</strong> + Art wählen — das kurze Symbol von Börse/Depot (z. B.{' '}
+            <strong style={{ color: '#c9d1d9' }}>AAPL</strong> für Apple, <strong style={{ color: '#c9d1d9' }}>SAP</strong>,{' '}
+            <strong style={{ color: '#c9d1d9' }}>BTC</strong> für Bitcoin). <strong style={{ color: '#c9d1d9' }}>Keine ISIN</strong>{' '}
+            (die lange Nummer auf dem Depotauszug). Erscheint danach in der Order-Liste.
+          </>
         )}
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 8, alignItems: 'center' }}>
-        <input
-          style={{ ...S.input, flex: '1 1 90px', minWidth: 80, marginTop: 0 }}
-          placeholder="Ticker"
-          autoCapitalize="characters"
-          value={wlAddSym}
-          onChange={(e) => setWlAddSym(e.target.value)}
-        />
-        <input
-          style={{ ...S.input, flex: '1 1 100px', minWidth: 90, marginTop: 0 }}
-          placeholder="Name (optional)"
-          value={wlAddName}
-          onChange={(e) => setWlAddName(e.target.value)}
-        />
+      <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 8, alignItems: 'flex-end' }}>
+        <div style={{ flex: '1 1 90px', minWidth: 80 }}>
+          <label style={{ fontSize: 10, color: '#8b949e', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+            Börsen-Kürzel
+          </label>
+          <input
+            style={{ ...S.input, marginTop: 0 }}
+            placeholder="z. B. AAPL, SAP, BTC"
+            autoCapitalize="characters"
+            value={wlAddSym}
+            onChange={(e) => setWlAddSym(e.target.value)}
+          />
+        </div>
+        <div style={{ flex: '1 1 100px', minWidth: 90 }}>
+          <label style={{ fontSize: 10, color: '#8b949e', fontWeight: 600, display: 'block', marginBottom: 4 }}>
+            Anzeigename (optional)
+          </label>
+          <input
+            style={{ ...S.input, marginTop: 0 }}
+            placeholder="z. B. Apple"
+            value={wlAddName}
+            onChange={(e) => setWlAddName(e.target.value)}
+          />
+        </div>
         <select
           style={{ ...S.select, marginTop: 0, flex: '0 1 130px', minWidth: 110 }}
           value={wlAddKind}
@@ -4122,7 +4144,8 @@ export default function AllWin() {
               </select>
             ) : (
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, lineHeight: 1.5 }}>
-                <strong style={{ color: '#c9d1d9' }}>Neues Instrument anlegen.</strong> Formular ausfüllen — danach wieder normal handeln. Über „Abbrechen“ kommst du zurück zur Titelwahl.
+                <strong style={{ color: '#c9d1d9' }}>Neues Instrument anlegen.</strong> Börsen-Kürzel eintragen (z. B. AAPL) — nicht
+                die ISIN. Danach wieder normal handeln; „Abbrechen“ = zurück zur Titelwahl.
               </div>
             )}
             {orderInstrumentAddOpen && !levelUpLocked && !liveMarketAddOpen ? (
