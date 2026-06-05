@@ -23,6 +23,14 @@ import MarketAssetIcon from './MarketAssetIcon';
 import HomeChartsSection from './homeCharts/HomeChartsSection';
 import { MAX_DAILY_VERMOGEN_SNAPSHOTS, normalizeDailyVermogenSnapshots, inferChartTimelineEndMs, type DailyVermogenSnapshot } from './homeCharts/homeChartData';
 import { allwinPalette as awBg } from '../theme/allwinPalette';
+import {
+  ensureMarketDailyHistory,
+  generateRoughDailyHistory,
+  marketHistoryRange,
+  sparkPricesFromHistory,
+  updateMarketDailyHistory,
+  type MarketDailyPrice,
+} from '../marketHistory';
 import { getOverviewDemoSnapshot, OVERVIEW_DEMO_HINT } from '../demo/overviewDemoSample';
 import {
   PORTFOLIO_POWER_MILESTONE_EURS,
@@ -692,6 +700,8 @@ type MarketItem = {
   icon: string;
   /** Markenlogo (CDN) — Krypto oft CoinGecko, Aktien/Titel z. B. FMP oder Wikimedia. */
   logoUrl?: string;
+  /** Grober simulierter Tagesverlauf (älteste zuerst). */
+  historyDaily?: MarketDailyPrice[];
 };
 
 type SubscriptionTier = 'free' | 'pro' | 'elite';
@@ -724,7 +734,7 @@ const DEV_FORCE_ELITE =
   rawDevForceElite === 'true' ||
   (import.meta.env.DEV && rawDevForceElite !== '0' && rawDevForceElite !== 'false');
 
-const BASE_MARKET: MarketItem[] = [
+const BASE_MARKET_RAW: Omit<MarketItem, 'historyDaily'>[] = [
   {
     sym: 'BTC',
     name: 'Bitcoin',
@@ -766,6 +776,11 @@ const BASE_MARKET: MarketItem[] = [
     logoUrl: 'https://financialmodelingprep.com/image-stock/MSCI.png',
   },
 ];
+
+const BASE_MARKET: MarketItem[] = BASE_MARKET_RAW.map((m) => ({
+  ...m,
+  historyDaily: generateRoughDailyHistory(m.sym, m.price),
+}));
 
 /** Vom Nutzer ergänzte Wertpapiere/Krypto (watchlistExtras im User-State + localStorage). */
 type WatchlistExtraPersist = {
@@ -855,7 +870,14 @@ function buildMarketItemFromExtra(extra: WatchlistExtraPersist): MarketItem {
       : +(28 + Math.random() * 720).toFixed(2);
   const change = +((Math.random() - 0.5) * 4.2).toFixed(2);
   const icon = kind === 'crypto' ? '◆' : '◈';
-  return { sym, name, price, change, icon, logoUrl };
+  return { sym, name, price, change, icon, logoUrl, historyDaily: generateRoughDailyHistory(sym, price) };
+}
+
+function withEnsuredMarketHistory(m: MarketItem): MarketItem {
+  return {
+    ...m,
+    historyDaily: ensureMarketDailyHistory(m.sym, m.price, m.historyDaily),
+  };
 }
 
 function mergedWatchlistFromExtras(extras: WatchlistExtraPersist[]): MarketItem[] {
@@ -866,7 +888,7 @@ function mergedWatchlistFromExtras(extras: WatchlistExtraPersist[]): MarketItem[
     if (out.some((o) => o.sym === sym)) continue;
     out.push(buildMarketItemFromExtra({ ...x, sym }));
   }
-  return out;
+  return out.map(withEnsuredMarketHistory);
 }
 
 /** Für Portfolio-Power / Order: Basis + eigene Instrumente ohne watchlistOnly. */
@@ -1090,11 +1112,13 @@ const Bar = ({ pct, color }: { pct: number; color: string }) => (
 );
 
 const Spark = ({ data, color }: { data: number[]; color: string }) => {
+  if (!data.length) return null;
   const max = Math.max(...data);
   const min = Math.min(...data);
+  const denom = Math.max(1, data.length - 1);
   const pts = data
     .map((v, i) => {
-      const x = (i / (data.length - 1)) * 80;
+      const x = (i / denom) * 80;
       const y = 30 - ((v - min) / (max - min + 1)) * 28;
       return `${x},${y}`;
     })
@@ -1431,6 +1455,7 @@ export default function AllWin() {
   const portfolioTotalPower = Math.round((portfolioValue + portfolioBrokerCash) * 100) / 100;
   const [levelUpPortfolioOpen, setLevelUpPortfolioOpen] = useState(true);
   const [levelUpMarketOpen, setLevelUpMarketOpen] = useState(true);
+  const [marketDetailSym, setMarketDetailSym] = useState<string | null>(null);
   const [tradeMode, setTradeMode] = useState<'buy' | 'sell'>('buy');
   const [tradeSym, setTradeSym] = useState(BASE_MARKET[0].sym);
   const [tradeAmount, setTradeAmount] = useState('');
@@ -2416,11 +2441,15 @@ export default function AllWin() {
   useEffect(() => {
     const id = setInterval(() => {
       setMarket((prev) =>
-        prev.map((m) => ({
-          ...m,
-          price: +(m.price * (1 + (Math.random() - 0.499) * 0.002)).toFixed(2),
-          change: +(m.change + (Math.random() - 0.5) * 0.2).toFixed(2),
-        })),
+        prev.map((m) => {
+          const price = +(m.price * (1 + (Math.random() - 0.499) * 0.002)).toFixed(2);
+          return {
+            ...m,
+            price,
+            change: +(m.change + (Math.random() - 0.5) * 0.2).toFixed(2),
+            historyDaily: updateMarketDailyHistory(m.historyDaily, m.sym, price),
+          };
+        }),
       );
     }, 30_000);
     return () => clearInterval(id);
@@ -3751,7 +3780,7 @@ export default function AllWin() {
     }),
     debtCard: { background: awBg.card, borderRadius: 14, padding: 16, marginBottom: 10, border: `1px solid ${awBg.cardBorder}` },
     txRow: { display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${awBg.cardBorder}` },
-    marketRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: `1px solid ${awBg.cardBorder}` },
+    marketRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0' },
     toast: (type: 'success' | 'error' | 'level') => ({
       position: 'fixed' as const,
       top: 'max(12px, env(safe-area-inset-top, 0px))',
@@ -6153,60 +6182,147 @@ export default function AllWin() {
 
   const renderMarket = (opts?: { collapsible?: boolean }) => {
     const collapsible = opts?.collapsible === true;
-    const rows = market.map((m) => (
-      <div key={m.sym} style={S.marketRow}>
-        <MarketAssetIcon item={m} size={36} borderRadius={10} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>{m.sym}</div>
-          <div style={{ fontSize: 11, color: '#7d8590', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</div>
-        </div>
-        <div
-          style={{
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            opacity: 0.92,
-            marginLeft: 4,
-            marginRight: 4,
-          }}
-          title="Markt-Stimmung (Mini-Verlauf)"
-        >
-          <Spark data={Array.from({ length: 10 }, () => m.price * (1 + (Math.random() - 0.5) * 0.05))} color={m.change >= 0 ? '#2563eb' : '#ff7b7b'} />
-        </div>
-        <div style={{ textAlign: 'right', flexShrink: 0, minWidth: 92 }}>
-          <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 600, marginBottom: 2 }}>Kurs</div>
-          <div style={{ fontWeight: 800, fontSize: 14, color: '#e6edf3' }}>{fmt(m.price)}</div>
-          <div style={{ fontSize: 12, color: m.change >= 0 ? '#2563eb' : '#ff7b7b', fontWeight: 700, marginTop: 2 }}>
-            {m.change >= 0 ? '▲' : '▼'} {Math.abs(m.change).toFixed(2)}%
+    const rows = market.map((m) => {
+      const hist = m.historyDaily ?? [];
+      const expanded = marketDetailSym === m.sym;
+      const range = marketHistoryRange(hist);
+      const sparkData = sparkPricesFromHistory(m.historyDaily, m.price);
+      return (
+        <div key={m.sym} style={{ borderBottom: `1px solid ${awBg.cardBorder}` }}>
+          <div style={S.marketRow}>
+            <button
+              type="button"
+              aria-expanded={expanded}
+              aria-label={`${m.sym}: Kurs und groben Verlauf ${expanded ? 'ausblenden' : 'anzeigen'}`}
+              onClick={() => setMarketDetailSym(expanded ? null : m.sym)}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: 0,
+                border: 'none',
+                background: 'transparent',
+                color: 'inherit',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <MarketAssetIcon item={m} size={36} borderRadius={10} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{m.sym}</div>
+                <div style={{ fontSize: 11, color: '#7d8590', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {m.name}
+                  {expanded ? ' · Verlauf ▲' : ' · Verlauf ▶'}
+                </div>
+              </div>
+              <div
+                style={{
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: 0.92,
+                  marginLeft: 4,
+                  marginRight: 4,
+                }}
+                title="30-Tage-Verlauf (simuliert)"
+              >
+                <Spark data={sparkData} color={m.change >= 0 ? '#2563eb' : '#ff7b7b'} />
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0, minWidth: 92 }}>
+                <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 600, marginBottom: 2 }}>Kurs</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: '#e6edf3' }}>{fmt(m.price)}</div>
+                <div style={{ fontSize: 12, color: m.change >= 0 ? '#2563eb' : '#ff7b7b', fontWeight: 700, marginTop: 2 }}>
+                  {m.change >= 0 ? '▲' : '▼'} {Math.abs(m.change).toFixed(2)}%
+                </div>
+              </div>
+            </button>
+            {!BASE_SYM_SET.has(m.sym) ? (
+              <button
+                type="button"
+                aria-label={`${m.sym} aus Watchlist entfernen`}
+                onClick={() => {
+                  if (marketDetailSym === m.sym) setMarketDetailSym(null);
+                  removeWatchlistInstrument(m.sym);
+                }}
+                style={{
+                  flexShrink: 0,
+                  width: 34,
+                  height: 34,
+                  borderRadius: 8,
+                  border: `1px solid ${awBg.line}`,
+                  background: '#24242c',
+                  color: '#8b949e',
+                  cursor: 'pointer',
+                  fontSize: 16,
+                  lineHeight: 1,
+                  padding: 0,
+                }}
+              >
+                ✕
+              </button>
+            ) : (
+              <div style={{ width: 34, flexShrink: 0 }} aria-hidden />
+            )}
           </div>
+          {expanded ? (
+            <div
+              style={{
+                padding: '0 4px 12px 46px',
+                marginTop: -4,
+              }}
+            >
+              <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
+                Grober Tagesverlauf (simuliert, 30 Kalendertage) — nicht für echte Anlageentscheidungen.
+                {range ? (
+                  <>
+                    {' '}
+                    Spanne: <strong style={{ color: '#c9d1d9' }}>{fmt(range.min)}</strong> –{' '}
+                    <strong style={{ color: '#c9d1d9' }}>{fmt(range.max)}</strong>
+                  </>
+                ) : null}
+              </div>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr auto',
+                  gap: '2px 12px',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: '#7d8590',
+                  paddingBottom: 4,
+                  borderBottom: `1px solid ${awBg.line}`,
+                }}
+              >
+                <span>Datum</span>
+                <span style={{ textAlign: 'right' }}>Schluss €</span>
+              </div>
+              <div style={{ maxHeight: 168, overflowY: 'auto' as const, WebkitOverflowScrolling: 'touch' }}>
+                {[...hist].reverse().map((pt) => (
+                  <div
+                    key={pt.date}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr auto',
+                      gap: '2px 12px',
+                      fontSize: 11,
+                      padding: '5px 0',
+                      borderBottom: `1px solid ${awBg.cardBorder}`,
+                      color: pt.date === todayIsoDate() ? '#e6edf3' : '#8b949e',
+                    }}
+                  >
+                    <span>{formatTxDateLabel(pt.date)}</span>
+                    <span style={{ textAlign: 'right', fontWeight: pt.date === todayIsoDate() ? 800 : 600 }}>{fmt(pt.price)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
-        {!BASE_SYM_SET.has(m.sym) ? (
-          <button
-            type="button"
-            aria-label={`${m.sym} aus Watchlist entfernen`}
-            onClick={() => removeWatchlistInstrument(m.sym)}
-            style={{
-              flexShrink: 0,
-              width: 34,
-              height: 34,
-              borderRadius: 8,
-              border: `1px solid ${awBg.line}`,
-              background: '#24242c',
-              color: '#8b949e',
-              cursor: 'pointer',
-              fontSize: 16,
-              lineHeight: 1,
-              padding: 0,
-            }}
-          >
-            ✕
-          </button>
-        ) : (
-          <div style={{ width: 34, flexShrink: 0 }} aria-hidden />
-        )}
-      </div>
-    ));
+      );
+    });
 
     const freeCard = (
       <div style={{ ...S.card, border: '1px solid #f8d03a55', background: 'linear-gradient(135deg,#231f0d,#2e2810)' }}>
@@ -6377,7 +6493,8 @@ export default function AllWin() {
                 <>
                   {!levelUpLocked && liveMarketAddOpen && renderInstrumentAddForm(() => setLiveMarketAddOpen(false), { watchlistOnly: true })}
                   <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
-                    Kurse in <strong style={{ color: '#c9d1d9' }}>€ je Stück</strong> · Tagesänderung in %. In der Beta simuliert, nicht die echte Börse.
+                    Kurse in <strong style={{ color: '#c9d1d9' }}>€ je Stück</strong> · Tagesänderung in %. Zeile antippen für{' '}
+                    <strong style={{ color: '#c9d1d9' }}>grobe Historie</strong> (30 Tage, simuliert — keine echten Börsendaten).
                   </div>
                   {rows}
                 </>
