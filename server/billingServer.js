@@ -117,6 +117,42 @@ function createDefaultState() {
   };
 }
 
+/** Creator/Test-Accounts: LevelUp + Elite dauerhaft (Env: CREATOR_UNLOCK_EMAILS, kommagetrennt). */
+function creatorUnlockEmailSet() {
+  const fallback = 'alwin-ruf@web.de,alwin.ruf@online.de,alwinruf18@gmail.com';
+  const raw = String(process.env.CREATOR_UNLOCK_EMAILS || fallback).trim();
+  return new Set(
+    raw
+      .split(',')
+      .map((e) => normalizeEmail(e))
+      .filter(Boolean),
+  );
+}
+
+function isCreatorUnlockEmail(email) {
+  return creatorUnlockEmailSet().has(normalizeEmail(email));
+}
+
+function applyCreatorUnlock(email, state) {
+  if (!isCreatorUnlockEmail(email) || !state || typeof state !== 'object') return state;
+  const next = { ...state };
+  if (next.levelUpMode !== 'full') next.levelUpMode = 'full';
+  const sub = next.subscription && typeof next.subscription === 'object' ? next.subscription : {};
+  if (sub.tier !== 'elite') {
+    next.subscription = { ...sub, tier: 'elite', cycle: sub.cycle || 'yearly' };
+  }
+  return next;
+}
+
+function ensureCreatorUnlockUser(user) {
+  const unlocked = applyCreatorUnlock(user.email, user.state || {});
+  if (unlocked === user.state) return user;
+  const updated = { ...user, state: unlocked, updatedAt: new Date().toISOString() };
+  saveUser(updated);
+  console.log(`[creator] LevelUp/Elite freigeschaltet für ${user.email}`);
+  return updated;
+}
+
 /** Nutzer mit echten App-Daten haben Onboarding faktisch abgeschlossen (Beta-Migration). */
 function appStateImpliesOnboardingComplete(state) {
   if (!state || typeof state !== 'object') return false;
@@ -471,13 +507,14 @@ app.get('/api/user/state', (req, res) => {
   const users = loadUsers();
   const index = users.findIndex((u) => u.id === payload.userId);
   if (index < 0) return res.status(401).json({ error: 'Unauthorized' });
-  const user = users[index];
+  let user = ensureCreatorUnlockUser(users[index]);
   let state = user.state || {};
   const patched = ensureOnboardingDoneInState(state);
   if (patched !== state) {
     saveUser({ ...user, state: patched });
     state = patched;
   }
+  state = applyCreatorUnlock(user.email, state);
   return res.json({ state });
 });
 
@@ -525,6 +562,7 @@ app.put('/api/user/state', (req, res) => {
   }
   const nextSavedAt = Math.max(Number(prevState._clientSavedAt) || 0, clientSavedAt, Date.now());
   nextState._clientSavedAt = nextSavedAt;
+  nextState = applyCreatorUnlock(users[index].email, nextState);
   const updatedUser = {
     ...users[index],
     state: nextState,
