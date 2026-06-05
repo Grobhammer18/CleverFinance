@@ -1106,7 +1106,28 @@ const Spark = ({ data, color }: { data: number[]; color: string }) => {
   );
 };
 
-/** Ruhiger Bestätigungs-Dialog — ohne Konfetti oder Pop-Animationen. */
+type ConfettiPiece = { left: number; delay: number; duration: number; drift: number; rot: number; hue: string; w: number; h: number };
+
+function buildConfettiPieces(seed: number, count: number): ConfettiPiece[] {
+  let s = seed % 2147483646 || 1;
+  const rnd = () => {
+    s = (s * 48271) % 2147483647;
+    return (s % 10000) / 10000;
+  };
+  const hues = ['#2563eb', '#93c5fd', '#a855f7', '#5b93ff', '#00d4aa', '#f8d03a'];
+  return Array.from({ length: count }, (_, i) => ({
+    left: rnd() * 100,
+    delay: rnd() * 0.35,
+    duration: 1.6 + rnd() * 0.9,
+    drift: (rnd() - 0.5) * 140,
+    rot: 180 + rnd() * 360,
+    hue: hues[i % hues.length],
+    w: 4 + rnd() * 4,
+    h: 5 + rnd() * 6,
+  }));
+}
+
+/** Meilenstein-Popup: sachlicher Text, dezentes Einblenden + wenig Konfetti. */
 function CelebrationCard({
   open,
   onClose,
@@ -1114,6 +1135,9 @@ function CelebrationCard({
   title,
   body,
   actionLabel,
+  icon,
+  accent = '#2563eb',
+  confettiCount = 16,
 }: {
   open: boolean;
   onClose: () => void;
@@ -1121,7 +1145,16 @@ function CelebrationCard({
   title: string;
   body: string;
   actionLabel: string;
+  icon?: string;
+  accent?: string;
+  confettiCount?: number;
 }) {
+  const [animSeed, setAnimSeed] = useState(0);
+  useEffect(() => {
+    if (open) setAnimSeed(Date.now());
+  }, [open]);
+  const pieces = useMemo(() => buildConfettiPieces(animSeed, confettiCount), [animSeed, confettiCount]);
+
   if (!open) return null;
   return (
     <div
@@ -1136,24 +1169,76 @@ function CelebrationCard({
         justifyContent: 'center',
         padding: 20,
         background: 'rgba(0,0,0,0.72)',
+        animation: 'awCelebrationFadeIn 0.28s ease-out forwards',
       }}
     >
+      <style>{`
+        @keyframes awCelebrationFadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes awCelebrationPop {
+          from { transform: scale(0.94) translateY(8px); opacity: 0; }
+          to { transform: scale(1) translateY(0); opacity: 1; }
+        }
+        @keyframes awCelebrationConfetti {
+          from { transform: translate3d(0, -8px, 0) rotate(0deg); opacity: 0.9; }
+          to { transform: translate3d(var(--drift), 70vh, 0) rotate(var(--rot)); opacity: 0; }
+        }
+      `}</style>
+
+      {confettiCount > 0 ? (
+        <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' as const }}>
+          {pieces.map((p, i) => (
+            <div
+              key={i}
+              style={
+                {
+                  position: 'absolute',
+                  left: `${p.left}%`,
+                  top: '-2%',
+                  width: p.w,
+                  height: p.h,
+                  borderRadius: 2,
+                  background: p.hue,
+                  opacity: 0.85,
+                  animation: `awCelebrationConfetti ${p.duration}s ease-out forwards`,
+                  animationDelay: `${p.delay}s`,
+                  ['--drift' as string]: `${p.drift}px`,
+                  ['--rot' as string]: `${p.rot}deg`,
+                } as CSSProperties
+              }
+            />
+          ))}
+        </div>
+      ) : null}
+
       <div
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
         style={{
+          position: 'relative',
           maxWidth: 380,
           width: '100%',
           borderRadius: 16,
           padding: '24px 20px',
           background: '#161b22',
-          border: '1px solid #30363d',
+          border: `1px solid #30363d`,
+          borderTop: `3px solid ${accent}`,
           boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
+          animation: 'awCelebrationPop 0.38s ease-out forwards',
         }}
       >
-        <div style={{ fontSize: 18, fontWeight: 800, color: '#e6edf3', lineHeight: 1.35 }}>{title}</div>
-        <div style={{ fontSize: 13, color: '#8b949e', marginTop: 10, lineHeight: 1.55 }}>{body}</div>
+        {icon ? (
+          <div style={{ fontSize: 40, lineHeight: 1, marginBottom: 10, textAlign: 'center' as const }}>{icon}</div>
+        ) : null}
+        <div style={{ fontSize: 18, fontWeight: 800, color: '#e6edf3', lineHeight: 1.35, textAlign: icon ? ('center' as const) : undefined }}>
+          {title}
+        </div>
+        <div style={{ fontSize: 13, color: '#8b949e', marginTop: 10, lineHeight: 1.55, textAlign: icon ? ('center' as const) : undefined }}>
+          {body}
+        </div>
         <button
           type="button"
           style={{
@@ -1166,7 +1251,7 @@ function CelebrationCard({
             fontSize: 14,
             cursor: 'pointer',
             color: '#0d1117',
-            background: '#2563eb',
+            background: accent,
           }}
           onClick={onClose}
         >
@@ -1183,6 +1268,9 @@ function DebtZeroVictoryOverlay({ open, onClose }: { open: boolean; onClose: () 
       open={open}
       onClose={onClose}
       zIndex={5000}
+      icon="🏆"
+      accent="#f8d03a"
+      confettiCount={18}
       title="Alle Schulden abbezahlt"
       body="Du hast alle offenen Boost-Schulden tilgt. Guter Meilenstein — als Nächstes lohnt sich konsequent Sparen und Investieren."
       actionLabel="Weiter"
@@ -1196,6 +1284,9 @@ function NotgroschenFullOverlay({ open, onClose }: { open: boolean; onClose: () 
       open={open}
       onClose={onClose}
       zIndex={5001}
+      icon="🛡️"
+      accent="#5b93ff"
+      confettiCount={16}
       title="Notgroschen am Ziel"
       body="Dein Polster entspricht jetzt deinem Zielbetrag. Damit bist du für unerwartete Ausgaben besser abgesichert."
       actionLabel="Verstanden"
@@ -1218,6 +1309,9 @@ function PortfolioPowerMilestoneOverlay({
       open={open}
       onClose={onClose}
       zIndex={5002}
+      icon={meta.icon}
+      accent={meta.accent}
+      confettiCount={meta.confetti}
       title={meta.headline}
       body={meta.sub}
       actionLabel={meta.btn}

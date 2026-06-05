@@ -55,6 +55,9 @@ export function milestoneCelebrationMeta(m: PortfolioPowerMilestone): {
   headline: string;
   sub: string;
   btn: string;
+  icon: string;
+  accent: string;
+  confetti: number;
 } {
   switch (m) {
     case 8000:
@@ -62,48 +65,72 @@ export function milestoneCelebrationMeta(m: PortfolioPowerMilestone): {
         headline: '8.000 € Vermögen',
         sub: 'Portfolio Power und Cash Depot zusammen über 8.000 € — solide Basis für den nächsten Schritt.',
         btn: 'Weiter',
+        icon: '🏆',
+        accent: '#a855f7',
+        confetti: 14,
       };
     case 10_000:
       return {
         headline: '10.000 € Vermögen',
         sub: 'Die fünfstellige Marke ist erreicht. Kontinuität zahlt sich aus.',
         btn: 'Weiter',
+        icon: '✨',
+        accent: '#f8d03a',
+        confetti: 16,
       };
     case 20_000:
       return {
         headline: '20.000 € Vermögen',
         sub: 'Dein Vermögen wächst planbar — weiter am Plan festhalten.',
         btn: 'Weiter',
+        icon: '📈',
+        accent: '#00d4aa',
+        confetti: 16,
       };
     case 50_000:
       return {
         headline: '50.000 € Vermögen',
         sub: 'Ein beachtliches Polster. Disziplin und Zeit wirken hier sichtbar.',
         btn: 'Weiter',
+        icon: '🔷',
+        accent: '#a855f7',
+        confetti: 18,
       };
     case 100_000:
       return {
         headline: '100.000 € Vermögen',
         sub: 'Sechsstellig — ein Meilenstein, den viele erst nach Jahren erreichen.',
         btn: 'Weiter',
+        icon: '⚡',
+        accent: '#58a6ff',
+        confetti: 20,
       };
     case 200_000:
       return {
         headline: '200.000 € Vermögen',
         sub: 'Portfolio und Cash Depot zusammen über 200.000 €.',
         btn: 'Weiter',
+        icon: '💠',
+        accent: '#7dd3fc',
+        confetti: 20,
       };
     case 500_000:
       return {
         headline: '500.000 € Vermögen',
         sub: 'Halbe Million im Gesamtvermögen — stark aufgestellt.',
         btn: 'Weiter',
+        icon: '🚀',
+        accent: '#58a6ff',
+        confetti: 22,
       };
     case 1_000_000:
       return {
         headline: '1 Mio. € Vermögen',
         sub: 'Eine Million Portfolio Power plus Cash Depot — ein seltener und bedeutsamer Stand.',
         btn: 'Weiter',
+        icon: '🌟',
+        accent: '#f8d03a',
+        confetti: 26,
       };
     default: {
       const _x: never = m;
