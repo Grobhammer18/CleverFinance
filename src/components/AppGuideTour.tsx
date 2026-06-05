@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import type { AppTourStep } from '../onboarding/appGuideContent';
 
@@ -11,30 +11,105 @@ type Props = {
 
 type BubblePos = { left: number; top: number; placement: 'top' | 'bottom' | 'center' };
 
+const TAB_BAR_RESERVE = 84;
+const VIEW_MARGIN = 12;
+const TARGET_GAP = 12;
+const BUBBLE_ESTIMATE_H = 280;
+
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
+}
+
+function viewportBox() {
+  const vv = window.visualViewport;
+  return {
+    top: vv?.offsetTop ?? 0,
+    left: vv?.offsetLeft ?? 0,
+    width: vv?.width ?? window.innerWidth,
+    height: vv?.height ?? window.innerHeight,
+  };
+}
+
+function computeBubblePosition(rect: DOMRect, bubbleH: number, bubbleW: number): BubblePos {
+  const vp = viewportBox();
+  const maxW = Math.min(340, vp.width - VIEW_MARGIN * 2);
+  const w = Math.min(bubbleW, maxW);
+  const h = bubbleH || BUBBLE_ESTIMATE_H;
+
+  const minTop = vp.top + VIEW_MARGIN;
+  const maxBottom = vp.top + vp.height - TAB_BAR_RESERVE - VIEW_MARGIN;
+  const cx = clamp(rect.left + rect.width / 2, vp.left + VIEW_MARGIN + w / 2, vp.left + vp.width - VIEW_MARGIN - w / 2);
+
+  const spaceBelow = maxBottom - (rect.bottom + TARGET_GAP);
+  const spaceAbove = rect.top - TARGET_GAP - minTop;
+
+  const fitsBelow = spaceBelow >= h;
+  const fitsAbove = spaceAbove >= h;
+
+  if (fitsBelow || (!fitsAbove && spaceBelow >= spaceAbove)) {
+    const top = clamp(rect.bottom + TARGET_GAP, minTop, maxBottom - h);
+    return { left: cx, top, placement: 'bottom' };
+  }
+
+  if (fitsAbove || spaceAbove > spaceBelow) {
+    const anchorBottom = clamp(rect.top - TARGET_GAP, minTop + h, maxBottom);
+    return { left: cx, top: anchorBottom, placement: 'top' };
+  }
+
+  return {
+    left: vp.left + vp.width / 2,
+    top: vp.top + vp.height / 2,
+    placement: 'center',
+  };
 }
 
 export default function AppGuideTour({ open, steps, onClose, onTabChange }: Props) {
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
+  const [bubblePos, setBubblePos] = useState<BubblePos>({
+    left: 0,
+    top: 0,
+    placement: 'center',
+  });
+  const bubbleRef = useRef<HTMLDivElement>(null);
 
   const step = steps[index];
-  const isCenter = !step?.target;
   const isLast = index >= steps.length - 1;
 
-  const measure = useCallback(() => {
-    if (!step?.target) {
+  const layoutStep = useCallback(() => {
+    if (!step) return;
+
+    if (!step.target) {
+      const vp = viewportBox();
       setRect(null);
+      setBubblePos({
+        left: vp.left + vp.width / 2,
+        top: vp.top + vp.height / 2,
+        placement: 'center',
+      });
       return;
     }
+
     const el = document.querySelector(`[data-tour="${step.target}"]`);
     if (!el) {
+      const vp = viewportBox();
       setRect(null);
+      setBubblePos({
+        left: vp.left + vp.width / 2,
+        top: vp.top + vp.height / 2,
+        placement: 'center',
+      });
       return;
     }
-    setRect(el.getBoundingClientRect());
-  }, [step?.target]);
+
+    el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+    const targetRect = el.getBoundingClientRect();
+    setRect(targetRect);
+
+    const bubbleH = bubbleRef.current?.offsetHeight ?? BUBBLE_ESTIMATE_H;
+    const bubbleW = bubbleRef.current?.offsetWidth ?? Math.min(340, window.innerWidth - 24);
+    setBubblePos(computeBubblePosition(targetRect, bubbleH, bubbleW));
+  }, [step]);
 
   useEffect(() => {
     if (!open) return;
@@ -44,45 +119,31 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
   useLayoutEffect(() => {
     if (!open || !step) return;
     if (step.tab) onTabChange(step.tab);
-    const t1 = window.setTimeout(measure, 80);
-    const t2 = window.setTimeout(measure, 280);
-    const onReflow = () => measure();
+
+    layoutStep();
+    const t1 = window.setTimeout(layoutStep, 100);
+    const t2 = window.setTimeout(layoutStep, 320);
+
+    const onReflow = () => layoutStep();
     window.addEventListener('resize', onReflow);
+    window.visualViewport?.addEventListener('resize', onReflow);
+    window.visualViewport?.addEventListener('scroll', onReflow);
     window.addEventListener('scroll', onReflow, true);
+
     return () => {
       window.clearTimeout(t1);
       window.clearTimeout(t2);
       window.removeEventListener('resize', onReflow);
+      window.visualViewport?.removeEventListener('resize', onReflow);
+      window.visualViewport?.removeEventListener('scroll', onReflow);
       window.removeEventListener('scroll', onReflow, true);
     };
-  }, [open, index, step, measure, onTabChange]);
+  }, [open, index, step, layoutStep, onTabChange]);
 
-  const bubblePos = useMemo((): BubblePos => {
-    if (isCenter || !rect) {
-      return {
-        left: window.innerWidth / 2,
-        top: window.innerHeight / 2,
-        placement: 'center',
-      };
-    }
-    const pad = 14;
-    const maxW = Math.min(340, window.innerWidth - 24);
-    const cx = rect.left + rect.width / 2;
-    const below = rect.bottom + pad;
-    const above = rect.top - pad;
-    if (below + 200 < window.innerHeight) {
-      return {
-        left: clamp(cx, 12 + maxW / 2, window.innerWidth - 12 - maxW / 2),
-        top: below,
-        placement: 'bottom',
-      };
-    }
-    return {
-      left: clamp(cx, 12 + maxW / 2, window.innerWidth - 12 - maxW / 2),
-      top: above,
-      placement: 'top',
-    };
-  }, [isCenter, rect]);
+  useLayoutEffect(() => {
+    if (!open || !step?.target || !rect) return;
+    layoutStep();
+  }, [open, step?.target, rect, layoutStep]);
 
   if (!open || !step || steps.length === 0) return null;
 
@@ -118,10 +179,11 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
     bubblePos.placement === 'center'
       ? {
           position: 'fixed',
-          left: '50%',
-          top: '50%',
+          left: bubblePos.left,
+          top: bubblePos.top,
           transform: 'translate(-50%, -50%)',
           width: 'min(360px, calc(100vw - 32px))',
+          maxHeight: `calc(100dvh - ${TAB_BAR_RESERVE + VIEW_MARGIN * 2}px)`,
           zIndex: 100003,
         }
       : {
@@ -130,6 +192,7 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
           top: bubblePos.top,
           transform: bubblePos.placement === 'top' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
           width: 'min(340px, calc(100vw - 24px))',
+          maxHeight: `calc(100dvh - ${TAB_BAR_RESERVE + VIEW_MARGIN * 2}px)`,
           zIndex: 100003,
         };
 
@@ -147,7 +210,7 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
         />
       )}
       {spotlight}
-      <div style={bubbleStyle}>
+      <div ref={bubbleRef} style={bubbleStyle}>
         <div
           style={{
             position: 'relative',
@@ -156,6 +219,9 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
             borderRadius: 16,
             padding: '18px 16px 14px',
             boxShadow: '0 16px 48px rgba(0,0,0,0.55), 0 0 0 1px rgba(88,166,255,0.2)',
+            maxHeight: 'inherit',
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
           }}
         >
           {bubblePos.placement !== 'center' && (
@@ -167,8 +233,20 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
                 width: 0,
                 height: 0,
                 ...(bubblePos.placement === 'bottom'
-                  ? { top: -10, transform: 'translateX(-50%)', borderLeft: '10px solid transparent', borderRight: '10px solid transparent', borderBottom: '10px solid #58a6ff' }
-                  : { bottom: -10, transform: 'translateX(-50%)', borderLeft: '10px solid transparent', borderRight: '10px solid transparent', borderTop: '10px solid #58a6ff' }),
+                  ? {
+                      top: -10,
+                      transform: 'translateX(-50%)',
+                      borderLeft: '10px solid transparent',
+                      borderRight: '10px solid transparent',
+                      borderBottom: '10px solid #58a6ff',
+                    }
+                  : {
+                      bottom: -10,
+                      transform: 'translateX(-50%)',
+                      borderLeft: '10px solid transparent',
+                      borderRight: '10px solid transparent',
+                      borderTop: '10px solid #58a6ff',
+                    }),
               }}
             />
           )}
@@ -219,7 +297,7 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
                 cursor: 'pointer',
               }}
             >
-              {isLast ? 'Los geht\'s 🚀' : 'Weiter'}
+              {isLast ? "Los geht's 🚀" : 'Weiter'}
             </button>
           </div>
           <button
