@@ -952,6 +952,44 @@ function fifoSharesAndCost(tradesNewestFirst: PortfolioTrade[], sym: string): { 
   return { shares, costEur: Math.max(0, cost), avgPerShare };
 }
 
+function roundTradeEur(v: number) {
+  return Math.round(v * 100) / 100;
+}
+
+/** Depot-Buchung rückgängig (für Löschen / Bearbeiten). */
+function reverseTradeOnPortfolio(
+  t: PortfolioTrade,
+  shares: Record<string, number>,
+  cash: number,
+): { shares: Record<string, number>; cash: number } {
+  const eu = tradeOrderEur(t) ?? 0;
+  const next = { ...shares };
+  if (t.kind === 'buy') {
+    next[t.sym] = Math.max(0, (next[t.sym] ?? 0) - t.amount);
+    if ((next[t.sym] ?? 0) <= 1e-12) delete next[t.sym];
+    return { shares: next, cash: roundTradeEur(cash + eu) };
+  }
+  next[t.sym] = (next[t.sym] ?? 0) + t.amount;
+  return { shares: next, cash: Math.max(0, roundTradeEur(cash - eu)) };
+}
+
+/** Depot-Buchung auf Bestand/Cash anwenden (nach Bearbeiten). */
+function applyTradeOnPortfolio(
+  t: PortfolioTrade,
+  shares: Record<string, number>,
+  cash: number,
+): { shares: Record<string, number>; cash: number } {
+  const eu = tradeOrderEur(t) ?? 0;
+  const next = { ...shares };
+  if (t.kind === 'buy') {
+    next[t.sym] = (next[t.sym] ?? 0) + t.amount;
+    return { shares: next, cash: Math.max(0, roundTradeEur(cash - eu)) };
+  }
+  next[t.sym] = Math.max(0, (next[t.sym] ?? 0) - t.amount);
+  if ((next[t.sym] ?? 0) <= 1e-12) delete next[t.sym];
+  return { shares: next, cash: roundTradeEur(cash + eu) };
+}
+
 const ADD_INSTRUMENT_SELECT_VALUE = '__cf_add_instrument__';
 
 function normalizePortfolioTrades(raw: unknown, allowedSyms: Set<string>): PortfolioTrade[] {
@@ -1640,6 +1678,11 @@ export default function AllWin() {
   const [tradeMode, setTradeMode] = useState<'buy' | 'sell'>('buy');
   const [tradeSym, setTradeSym] = useState(BASE_MARKET[0].sym);
   const [tradeAmount, setTradeAmount] = useState('');
+  const [levelUpTradesOpen, setLevelUpTradesOpen] = useState(true);
+  const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
+  const [tradeEditAmount, setTradeEditAmount] = useState('');
+  const [tradeEditPrice, setTradeEditPrice] = useState('');
+  const [tradeEditDate, setTradeEditDate] = useState('');
   const [wlAddSym, setWlAddSym] = useState('');
   const [wlAddName, setWlAddName] = useState('');
   const [wlAddKind, setWlAddKind] = useState<'stock' | 'crypto'>('stock');
@@ -2970,6 +3013,67 @@ export default function AllWin() {
     );
   };
 
+  const startEditPortfolioTrade = (t: PortfolioTrade) => {
+    setEditingTradeId(t.id);
+    setTradeEditAmount(String(t.amount).replace('.', ','));
+    setTradeEditPrice(
+      typeof t.pricePerShareEur === 'number' ? String(t.pricePerShareEur).replace('.', ',') : '',
+    );
+    setTradeEditDate(t.at);
+  };
+
+  const cancelEditPortfolioTrade = () => {
+    setEditingTradeId(null);
+    setTradeEditAmount('');
+    setTradeEditPrice('');
+    setTradeEditDate('');
+  };
+
+  const deletePortfolioTrade = (id: string) => {
+    const t = portfolioTrades.find((x) => x.id === id);
+    if (!t) return;
+    if (!window.confirm('Diese Depot-Buchung löschen? Bestand und Cash Depot werden entsprechend angepasst.')) return;
+    const { shares, cash } = reverseTradeOnPortfolio(t, portfolioShares, portfolioBrokerCash);
+    setPortfolioShares(shares);
+    setPortfolioBrokerCash(cash);
+    setPortfolioTrades((prev) => prev.filter((x) => x.id !== id));
+    if (editingTradeId === id) cancelEditPortfolioTrade();
+    showToast('Depot-Buchung gelöscht.');
+  };
+
+  const saveEditedPortfolioTrade = () => {
+    const old = portfolioTrades.find((t) => t.id === editingTradeId);
+    if (!old) return;
+    const amount = parseFloat(tradeEditAmount.replace(/\s/g, '').replace(',', '.'));
+    const price = parseFloat(tradeEditPrice.replace(/\s/g, '').replace(',', '.'));
+    if (Number.isNaN(amount) || amount <= 0) {
+      showToast('Bitte gültige Stückzahl eingeben.', 'error');
+      return;
+    }
+    if (Number.isNaN(price) || price <= 0) {
+      showToast('Bitte gültigen Kurs je Stück eingeben.', 'error');
+      return;
+    }
+    const updated: PortfolioTrade = {
+      ...old,
+      amount,
+      pricePerShareEur: roundTradeEur(price),
+      totalEur: roundTradeEur(amount * price),
+      at: tradeEditDate.trim() || old.at,
+    };
+    let shares = portfolioShares;
+    let cash = portfolioBrokerCash;
+    const rev = reverseTradeOnPortfolio(old, shares, cash);
+    shares = rev.shares;
+    cash = rev.cash;
+    const app = applyTradeOnPortfolio(updated, shares, cash);
+    setPortfolioShares(app.shares);
+    setPortfolioBrokerCash(app.cash);
+    setPortfolioTrades((prev) => prev.map((t) => (t.id === old.id ? updated : t)));
+    cancelEditPortfolioTrade();
+    showToast('Depot-Buchung aktualisiert ✅');
+  };
+
   const resetMoneyForm = () => {
     setEditingTxId(null);
     setForm({
@@ -4007,6 +4111,13 @@ export default function AllWin() {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{m.sym}</div>
                   <div style={{ fontSize: 10, color: '#7d8590', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</div>
+                  <div style={{ fontSize: 10, color: '#8b949e', marginTop: 2 }}>
+                    Kurs <strong style={{ color: '#c9d1d9' }}>{fmt(m.price)}</strong>/Stk ·{' '}
+                    <span style={{ color: m.change >= 0 ? '#2563eb' : '#ff7b7b', fontWeight: 600 }}>
+                      {m.change >= 0 ? '+' : ''}
+                      {m.change.toFixed(2)}%
+                    </span>
+                  </div>
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -4276,39 +4387,158 @@ export default function AllWin() {
 
           {portfolioTrades.length > 0 && (
             <div style={{ marginTop: 14 }}>
-              <div style={{ ...S.label, fontSize: 11, marginBottom: 8, color: '#8b949e' }}>📜 Zuletzt (gekauft / verkauft)</div>
-              <div style={{ maxHeight: 160, overflowY: 'auto' as const }}>
-                {portfolioTrades.map((t) => {
-                  const eu = tradeOrderEur(t);
-                  const showPps = typeof t.pricePerShareEur === 'number';
-                  return (
-                    <div
-                      key={t.id}
-                      style={{
-                        fontSize: 12,
-                        padding: '8px 0',
-                        borderBottom: `1px solid ${awBg.cardBorder}`,
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                        flexWrap: 'wrap' as const,
-                      }}
-                    >
-                      <span style={{ color: t.kind === 'buy' ? '#2563eb' : '#ff7b7b', fontWeight: 700 }}>
-                        {t.kind === 'buy' ? '🟢 Kauf' : '🔴 Verkauf'} {t.sym}
-                      </span>
-                      <span style={{ color: '#e6edf3', fontWeight: 600 }}>{fmtStk(t.amount)} Stk</span>
-                      {(showPps || eu != null) && (
-                        <span style={{ fontSize: 11, color: '#8b949e', width: '100%' }}>
-                          {showPps ? <>Kurs {fmt(t.pricePerShareEur!)}/Stk · </> : null}
-                          {eu != null ? <>Gesamt {fmt(eu)}</> : null}
-                        </span>
-                      )}
-                      <span style={{ fontSize: 10, color: '#7d8590', width: '100%' }}>{t.at}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              <button
+                type="button"
+                onClick={() => setLevelUpTradesOpen((o) => !o)}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  marginBottom: levelUpTradesOpen ? 8 : 0,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <div style={{ ...S.label, fontSize: 11, marginBottom: 0, color: '#8b949e' }}>
+                  📒 Depot-Buchungen ({portfolioTrades.length})
+                </div>
+                <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700 }}>{levelUpTradesOpen ? '▼' : '▶'}</span>
+              </button>
+              {levelUpTradesOpen && (
+                <>
+                  <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
+                    Alle Käufe/Verkäufe — prüfen, korrigieren oder löschen. Cash Depot und Bestand werden dabei angepasst.
+                  </div>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr auto',
+                      gap: '4px 8px',
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: '#7d8590',
+                      padding: '0 4px 6px',
+                      borderBottom: `1px solid ${awBg.cardBorder}`,
+                    }}
+                  >
+                    <span>Buchung</span>
+                    <span style={{ textAlign: 'right' }}>Aktion</span>
+                  </div>
+                  <div style={{ maxHeight: 280, overflowY: 'auto' as const, WebkitOverflowScrolling: 'touch' }}>
+                    {portfolioTrades.map((t) => {
+                      const eu = tradeOrderEur(t);
+                      const ppu =
+                        typeof t.pricePerShareEur === 'number'
+                          ? t.pricePerShareEur
+                          : eu != null && t.amount > 0
+                            ? eu / t.amount
+                            : null;
+                      const isEditing = editingTradeId === t.id;
+                      return (
+                        <div
+                          key={t.id}
+                          style={{
+                            padding: '10px 4px',
+                            borderBottom: `1px solid ${awBg.cardBorder}`,
+                            background: isEditing ? 'rgba(88, 166, 255, 0.06)' : 'transparent',
+                          }}
+                        >
+                          {!isEditing ? (
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div style={{ fontWeight: 800, fontSize: 13, color: t.kind === 'buy' ? '#58a6ff' : '#ff7b7b' }}>
+                                    {t.kind === 'buy' ? '🟢 Kauf' : '🔴 Verkauf'} · {t.sym}
+                                  </div>
+                                  <div style={{ fontSize: 12, color: '#e6edf3', marginTop: 4, lineHeight: 1.45 }}>
+                                    <strong>{fmtStk(t.amount)}</strong> Stk
+                                    {ppu != null ? (
+                                      <>
+                                        {' '}
+                                        à <strong>{fmt(ppu)}</strong>
+                                      </>
+                                    ) : null}
+                                    {eu != null ? (
+                                      <>
+                                        {' '}
+                                        · Summe <strong>{fmt(eu)}</strong>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                  <div style={{ fontSize: 10, color: '#7d8590', marginTop: 4 }}>{t.at}</div>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                                  <button
+                                    type="button"
+                                    style={{ ...S.chip(false), marginTop: 0, padding: '6px 10px', fontSize: 11, fontWeight: 700 }}
+                                    onClick={() => startEditPortfolioTrade(t)}
+                                  >
+                                    ✏️
+                                  </button>
+                                  <button
+                                    type="button"
+                                    style={{
+                                      ...S.chip(false),
+                                      marginTop: 0,
+                                      padding: '6px 10px',
+                                      fontSize: 11,
+                                      fontWeight: 700,
+                                      color: '#ff7b7b',
+                                      border: '1px solid rgba(207,34,46,0.35)',
+                                    }}
+                                    onClick={() => deletePortfolioTrade(t.id)}
+                                  >
+                                    🗑
+                                  </button>
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: '#58a6ff' }}>
+                                Buchung bearbeiten — {t.kind === 'buy' ? 'Kauf' : 'Verkauf'} {t.sym}
+                              </div>
+                              <input
+                                style={{ ...S.input, marginTop: 0, marginBottom: 0 }}
+                                inputMode="decimal"
+                                placeholder="Stückzahl"
+                                value={tradeEditAmount}
+                                onChange={(e) => setTradeEditAmount(e.target.value)}
+                              />
+                              <input
+                                style={{ ...S.input, marginTop: 0, marginBottom: 0 }}
+                                inputMode="decimal"
+                                placeholder="Kurs je Stück (€)"
+                                value={tradeEditPrice}
+                                onChange={(e) => setTradeEditPrice(e.target.value)}
+                              />
+                              <input
+                                style={{ ...S.input, marginTop: 0, marginBottom: 0 }}
+                                placeholder="Datum / Notiz"
+                                value={tradeEditDate}
+                                onChange={(e) => setTradeEditDate(e.target.value)}
+                              />
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <button type="button" style={{ ...S.btn(), flex: 1, marginTop: 0 }} onClick={saveEditedPortfolioTrade}>
+                                  Speichern
+                                </button>
+                                <button type="button" style={{ ...S.chip(false), flex: 1, marginTop: 0 }} onClick={cancelEditPortfolioTrade}>
+                                  Abbrechen
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </>
@@ -6060,9 +6290,10 @@ export default function AllWin() {
         >
           <Spark data={Array.from({ length: 10 }, () => m.price * (1 + (Math.random() - 0.5) * 0.05))} color={m.change >= 0 ? '#2563eb' : '#ff7b7b'} />
         </div>
-        <div style={{ textAlign: 'right', flexShrink: 0, minWidth: 72 }}>
-          <div style={{ fontWeight: 700 }}>{m.price.toLocaleString('de-DE', { minimumFractionDigits: 2 })}</div>
-          <div style={{ fontSize: 12, color: m.change >= 0 ? '#2563eb' : '#ff7b7b', fontWeight: 600 }}>
+        <div style={{ textAlign: 'right', flexShrink: 0, minWidth: 92 }}>
+          <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 600, marginBottom: 2 }}>Kurs</div>
+          <div style={{ fontWeight: 800, fontSize: 14, color: '#e6edf3' }}>{fmt(m.price)}</div>
+          <div style={{ fontSize: 12, color: m.change >= 0 ? '#2563eb' : '#ff7b7b', fontWeight: 700, marginTop: 2 }}>
             {m.change >= 0 ? '▲' : '▼'} {Math.abs(m.change).toFixed(2)}%
           </div>
         </div>
@@ -6261,6 +6492,9 @@ export default function AllWin() {
               {levelUpMarketOpen && (
                 <>
                   {!levelUpLocked && liveMarketAddOpen && renderInstrumentAddForm(() => setLiveMarketAddOpen(false), { watchlistOnly: true })}
+                  <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
+                    Kurse in <strong style={{ color: '#c9d1d9' }}>€ je Stück</strong> · Tagesänderung in %. In der Beta simuliert, nicht die echte Börse.
+                  </div>
                   {rows}
                 </>
               )}
