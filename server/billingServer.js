@@ -18,6 +18,7 @@ import {
 } from './db.js';
 import { mountAdminRoutes } from './adminRoutes.js';
 import { scanReceiptImage } from './receiptScan.js';
+import { mountMarketRoutes } from './marketData.js';
 
 const envPath = fs.existsSync('.env.local') ? '.env.local' : '.env';
 dotenv.config({ path: envPath });
@@ -689,6 +690,7 @@ app.get('/api/billing/checkout-session/:sessionId', async (req, res) => {
   }
 });
 
+mountMarketRoutes(app);
 mountAdminRoutes(app);
 
 app.listen(port, '0.0.0.0', () => {

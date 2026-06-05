@@ -23,14 +23,8 @@ import MarketAssetIcon from './MarketAssetIcon';
 import HomeChartsSection from './homeCharts/HomeChartsSection';
 import { MAX_DAILY_VERMOGEN_SNAPSHOTS, normalizeDailyVermogenSnapshots, inferChartTimelineEndMs, type DailyVermogenSnapshot } from './homeCharts/homeChartData';
 import { allwinPalette as awBg } from '../theme/allwinPalette';
-import {
-  ensureMarketDailyHistory,
-  generateRoughDailyHistory,
-  marketHistoryRange,
-  sparkPricesFromHistory,
-  updateMarketDailyHistory,
-  type MarketDailyPrice,
-} from '../marketHistory';
+import { marketHistoryRange, sparkPricesFromHistory, type MarketDailyPrice } from '../marketHistory';
+import { fetchMarketHistory, fetchMarketQuotes, type MarketInstrumentKind } from '../marketApi';
 import { getOverviewDemoSnapshot, OVERVIEW_DEMO_HINT } from '../demo/overviewDemoSample';
 import {
   PORTFOLIO_POWER_MILESTONE_EURS,
@@ -698,10 +692,13 @@ type MarketItem = {
   price: number;
   change: number;
   icon: string;
+  kind: MarketInstrumentKind;
   /** Markenlogo (CDN) — Krypto oft CoinGecko, Aktien/Titel z. B. FMP oder Wikimedia. */
   logoUrl?: string;
-  /** Grober simulierter Tagesverlauf (älteste zuerst). */
+  /** Tages-Schlusskurse (älteste zuerst), vom Server. */
   historyDaily?: MarketDailyPrice[];
+  historySource?: string;
+  quoteSource?: string;
 };
 
 type SubscriptionTier = 'free' | 'pro' | 'elite';
@@ -734,53 +731,53 @@ const DEV_FORCE_ELITE =
   rawDevForceElite === 'true' ||
   (import.meta.env.DEV && rawDevForceElite !== '0' && rawDevForceElite !== 'false');
 
-const BASE_MARKET_RAW: Omit<MarketItem, 'historyDaily'>[] = [
+const BASE_MARKET: MarketItem[] = [
   {
     sym: 'BTC',
     name: 'Bitcoin',
-    price: 84320,
-    change: 2.4,
+    price: 0,
+    change: 0,
+    kind: 'crypto',
     icon: '₿',
     logoUrl: 'https://assets.coingecko.com/coins/images/1/small/bitcoin.png',
   },
   {
     sym: 'ETH',
     name: 'Ethereum',
-    price: 3210,
-    change: -1.1,
+    price: 0,
+    change: 0,
+    kind: 'crypto',
     icon: 'Ξ',
     logoUrl: 'https://assets.coingecko.com/coins/images/279/small/ethereum.png',
   },
   {
     sym: 'SPY',
     name: 'S&P 500 ETF',
-    price: 512,
-    change: 0.7,
+    price: 0,
+    change: 0,
+    kind: 'stock',
     icon: '📈',
     logoUrl: 'https://financialmodelingprep.com/image-stock/SPY.png',
   },
   {
     sym: 'AAPL',
     name: 'Apple',
-    price: 178,
-    change: 1.2,
+    price: 0,
+    change: 0,
+    kind: 'stock',
     icon: '🍎',
     logoUrl: 'https://upload.wikimedia.org/wikipedia/commons/3/31/Apple_logo_white.svg',
   },
   {
     sym: 'MSCI',
-    name: 'MSCI World',
-    price: 98.4,
-    change: 0.4,
+    name: 'MSCI World (IWDA)',
+    price: 0,
+    change: 0,
+    kind: 'stock',
     icon: '🌍',
-    logoUrl: 'https://financialmodelingprep.com/image-stock/MSCI.png',
+    logoUrl: 'https://financialmodelingprep.com/image-stock/IWDA.AS.png',
   },
 ];
-
-const BASE_MARKET: MarketItem[] = BASE_MARKET_RAW.map((m) => ({
-  ...m,
-  historyDaily: generateRoughDailyHistory(m.sym, m.price),
-}));
 
 /** Vom Nutzer ergänzte Wertpapiere/Krypto (watchlistExtras im User-State + localStorage). */
 type WatchlistExtraPersist = {
@@ -864,20 +861,15 @@ function buildMarketItemFromExtra(extra: WatchlistExtraPersist): MarketItem {
   const slugLower = sym.toLowerCase().replace(/\./g, '');
   const logoUrl =
     kind === 'crypto' ? `${CRYPTOCURRENCY_ICONS_RAW}/${slugLower}.png` : fmpStockLogoUrl(sym);
-  const price =
-    kind === 'crypto'
-      ? +(Math.exp(Math.random() * Math.log(8000)) + 8).toFixed(2)
-      : +(28 + Math.random() * 720).toFixed(2);
-  const change = +((Math.random() - 0.5) * 4.2).toFixed(2);
   const icon = kind === 'crypto' ? '◆' : '◈';
-  return { sym, name, price, change, icon, logoUrl, historyDaily: generateRoughDailyHistory(sym, price) };
+  return { sym, name, price: 0, change: 0, kind, icon, logoUrl };
 }
 
-function withEnsuredMarketHistory(m: MarketItem): MarketItem {
-  return {
-    ...m,
-    historyDaily: ensureMarketDailyHistory(m.sym, m.price, m.historyDaily),
-  };
+function marketKindForItem(sym: string, extras: WatchlistExtraPersist[]): MarketInstrumentKind {
+  const base = BASE_MARKET.find((m) => m.sym === sym);
+  if (base) return base.kind;
+  const ex = extras.find((e) => sanitizeWatchlistSymbol(e.sym) === sym);
+  return ex?.kind === 'crypto' ? 'crypto' : 'stock';
 }
 
 function mergedWatchlistFromExtras(extras: WatchlistExtraPersist[]): MarketItem[] {
@@ -888,7 +880,7 @@ function mergedWatchlistFromExtras(extras: WatchlistExtraPersist[]): MarketItem[
     if (out.some((o) => o.sym === sym)) continue;
     out.push(buildMarketItemFromExtra({ ...x, sym }));
   }
-  return out.map(withEnsuredMarketHistory);
+  return out;
 }
 
 /** Für Portfolio-Power / Order: Basis + eigene Instrumente ohne watchlistOnly. */
@@ -1456,6 +1448,7 @@ export default function AllWin() {
   const [levelUpPortfolioOpen, setLevelUpPortfolioOpen] = useState(true);
   const [levelUpMarketOpen, setLevelUpMarketOpen] = useState(true);
   const [marketDetailSym, setMarketDetailSym] = useState<string | null>(null);
+  const [marketHistoryLoading, setMarketHistoryLoading] = useState<string | null>(null);
   const [tradeMode, setTradeMode] = useState<'buy' | 'sell'>('buy');
   const [tradeSym, setTradeSym] = useState(BASE_MARKET[0].sym);
   const [tradeAmount, setTradeAmount] = useState('');
@@ -2438,22 +2431,71 @@ export default function AllWin() {
     void applyCheckoutResult();
   }, [BILLING_API]);
 
-  useEffect(() => {
-    const id = setInterval(() => {
+  const marketRef = useRef(market);
+  marketRef.current = market;
+  const watchlistExtrasRef = useRef(watchlistExtras);
+  watchlistExtrasRef.current = watchlistExtras;
+  const marketInstrumentsKey = useMemo(() => market.map((m) => m.sym).sort().join(','), [market]);
+
+  const refreshMarketQuotes = useCallback(async () => {
+    if (!BILLING_API || !isPaidPlan) return;
+    const items = marketRef.current.map((m) => ({
+      sym: m.sym,
+      kind: marketKindForItem(m.sym, watchlistExtrasRef.current),
+    }));
+    if (!items.length) return;
+    try {
+      const quotes = await fetchMarketQuotes(BILLING_API, items);
       setMarket((prev) =>
         prev.map((m) => {
-          const price = +(m.price * (1 + (Math.random() - 0.499) * 0.002)).toFixed(2);
+          const q = quotes[m.sym];
+          if (!q || q.price == null) return m;
           return {
             ...m,
-            price,
-            change: +(m.change + (Math.random() - 0.5) * 0.2).toFixed(2),
-            historyDaily: updateMarketDailyHistory(m.historyDaily, m.sym, price),
+            price: q.price,
+            change: q.change,
+            quoteSource: q.source,
           };
         }),
       );
-    }, 30_000);
+    } catch (e) {
+      console.warn('[market] quotes', e);
+    }
+  }, [BILLING_API, isPaidPlan]);
+
+  const loadMarketHistory = useCallback(
+    async (sym: string) => {
+      if (!BILLING_API || !isPaidPlan) return;
+      setMarketHistoryLoading(sym);
+      try {
+        const kind = marketKindForItem(sym, watchlistExtrasRef.current);
+        const data = await fetchMarketHistory(BILLING_API, sym, kind, 30);
+        setMarket((prev) =>
+          prev.map((m) =>
+            m.sym === sym
+              ? {
+                  ...m,
+                  historyDaily: data.history,
+                  historySource: data.source,
+                }
+              : m,
+          ),
+        );
+      } catch {
+        showToast('Kursverlauf konnte nicht geladen werden.', 'error');
+      } finally {
+        setMarketHistoryLoading((cur) => (cur === sym ? null : cur));
+      }
+    },
+    [BILLING_API, isPaidPlan],
+  );
+
+  useEffect(() => {
+    if (!isPaidPlan) return;
+    void refreshMarketQuotes();
+    const id = window.setInterval(() => void refreshMarketQuotes(), 90_000);
     return () => clearInterval(id);
-  }, []);
+  }, [isPaidPlan, marketInstrumentsKey, refreshMarketQuotes]);
 
   useEffect(() => {
     if (tradableMarket.length === 0) return;
@@ -2674,7 +2716,8 @@ export default function AllWin() {
     const px = row?.price ?? 0;
     const roundEUR = (v: number) => Math.round(v * 100) / 100;
     if (!(px > 0)) {
-      showToast('Kein gültiger Marktkurs.', 'error');
+      showToast('Marktkurs noch nicht geladen — Live Marktdaten kurz warten oder Seite neu laden.', 'error');
+      void refreshMarketQuotes();
       return;
     }
     let n: number;
@@ -3859,7 +3902,7 @@ export default function AllWin() {
       <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 10, lineHeight: 1.45 }}>
         {opts?.watchlistOnly ? (
           <>
-            Nur Beobachtung unter <strong style={{ color: '#c9d1d9' }}>Live Marktdaten</strong> — Kurs simuliert, kein Eintrag unter
+            Nur Beobachtung unter <strong style={{ color: '#c9d1d9' }}>Live Marktdaten</strong> — Live-Kurs vom Server, kein Eintrag unter
             Portfolio Power / Order. <strong style={{ color: '#c9d1d9' }}>Börsen-Kürzel</strong> eintragen (z. B. AAPL, SAP), nicht die
             ISIN.
           </>
@@ -4108,7 +4151,7 @@ export default function AllWin() {
                   <strong>{fmtStk(orderSymLedger.held)}</strong> Stk
                 </div>
                 <div>
-                  <span style={{ color: '#7d8590' }}>Momentan-Kurs (simuliert): </span>
+                  <span style={{ color: '#7d8590' }}>Live-Kurs: </span>
                   <strong>{fmt(orderSymLedger.livePx)}</strong> je Stück
                 </div>
                 {orderSymLedger.fifo.avgPerShare != null ? (
@@ -6194,7 +6237,11 @@ export default function AllWin() {
               type="button"
               aria-expanded={expanded}
               aria-label={`${m.sym}: Kurs und groben Verlauf ${expanded ? 'ausblenden' : 'anzeigen'}`}
-              onClick={() => setMarketDetailSym(expanded ? null : m.sym)}
+              onClick={() => {
+                const next = expanded ? null : m.sym;
+                setMarketDetailSym(next);
+                if (next) void loadMarketHistory(next);
+              }}
               style={{
                 flex: 1,
                 minWidth: 0,
@@ -6227,13 +6274,13 @@ export default function AllWin() {
                   marginLeft: 4,
                   marginRight: 4,
                 }}
-                title="30-Tage-Verlauf (simuliert)"
+                title="30-Tage-Verlauf"
               >
                 <Spark data={sparkData} color={m.change >= 0 ? '#2563eb' : '#ff7b7b'} />
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0, minWidth: 92 }}>
                 <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 600, marginBottom: 2 }}>Kurs</div>
-                <div style={{ fontWeight: 800, fontSize: 14, color: '#e6edf3' }}>{fmt(m.price)}</div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: '#e6edf3' }}>{m.price > 0 ? fmt(m.price) : '…'}</div>
                 <div style={{ fontSize: 12, color: m.change >= 0 ? '#2563eb' : '#ff7b7b', fontWeight: 700, marginTop: 2 }}>
                   {m.change >= 0 ? '▲' : '▼'} {Math.abs(m.change).toFixed(2)}%
                 </div>
@@ -6275,11 +6322,15 @@ export default function AllWin() {
               }}
             >
               <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
-                Grober Tagesverlauf (simuliert, 30 Kalendertage) — nicht für echte Anlageentscheidungen.
+                {marketHistoryLoading === m.sym
+                  ? 'Kursverlauf wird geladen…'
+                  : m.historySource
+                    ? `Quelle: ${m.historySource} · 30 Handelstage · Schlusskurse in EUR`
+                    : 'Tages-Schlusskurse in EUR'}
                 {range ? (
                   <>
                     {' '}
-                    Spanne: <strong style={{ color: '#c9d1d9' }}>{fmt(range.min)}</strong> –{' '}
+                    · Spanne <strong style={{ color: '#c9d1d9' }}>{fmt(range.min)}</strong> –{' '}
                     <strong style={{ color: '#c9d1d9' }}>{fmt(range.max)}</strong>
                   </>
                 ) : null}
@@ -6493,8 +6544,8 @@ export default function AllWin() {
                 <>
                   {!levelUpLocked && liveMarketAddOpen && renderInstrumentAddForm(() => setLiveMarketAddOpen(false), { watchlistOnly: true })}
                   <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
-                    Kurse in <strong style={{ color: '#c9d1d9' }}>€ je Stück</strong> · Tagesänderung in %. Zeile antippen für{' '}
-                    <strong style={{ color: '#c9d1d9' }}>grobe Historie</strong> (30 Tage, simuliert — keine echten Börsendaten).
+                    Kurse in <strong style={{ color: '#c9d1d9' }}>€ je Stück</strong> (CoinGecko / Yahoo Finance, Aktien ggf. USD→EUR). Tagesänderung in
+                    %. Zeile antippen für <strong style={{ color: '#c9d1d9' }}>30-Tage-Historie</strong> — Aktualisierung ca. alle 90&nbsp;s.
                   </div>
                   {rows}
                 </>
