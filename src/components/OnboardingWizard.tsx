@@ -105,10 +105,44 @@ const WHY = ['Einfache Übersicht zu haben', 'Die Tools nutzen', 'Alles auf eine
 
 const WATCHLIST_MAP_OPTS = ['BTC', 'ETH', 'SPY', 'AAPL', 'MSCI'] as const;
 
+/** Während der Eingabe: Ziffern + ein Komma (z. B. „3200,50“). */
+function normalizeDecimalInput(raw: string): string {
+  let digitsBefore = '';
+  let digitsAfter = '';
+  let hasSep = false;
+  for (const ch of String(raw).replace(/\s/g, '')) {
+    if (ch >= '0' && ch <= '9') {
+      if (!hasSep) digitsBefore += ch;
+      else digitsAfter += ch;
+    } else if ((ch === ',' || ch === '.') && !hasSep && digitsBefore.length > 0) {
+      hasSep = true;
+    }
+  }
+  return hasSep ? `${digitsBefore},${digitsAfter}` : digitsBefore;
+}
+
 function parseNum(raw: string): number {
-  const n = parseFloat(String(raw).replace(/\s/g, '').replace(',', '.'));
+  let s = String(raw).trim().replace(/\s/g, '');
+  if (!s) return NaN;
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(s);
   return Number.isFinite(n) ? n : NaN;
 }
+
+type DebtRowForm = { name: string; totalStr: string; monthlyStr: string; kind: WizardDebtRow['kind'] };
+type StockForm = { name: string; buyPriceStr: string; qtyStr: string; mapSym: string };
+type ImmoForm = {
+  ortPlz: string;
+  strasse: string;
+  kaufpreisStr: string;
+  wohnflaecheStr: string;
+  kaltmieteStr: string;
+  nebenkostenStr: string;
+  letzteErhebung: string;
+  zyklusJahre: string;
+  mapSym: string;
+};
+type P2pForm = { gesamtStr: string; profitPctStr: string; mapSym: string };
 
 type Props = { onComplete: (p: OnboardingV2Payload) => void };
 
@@ -119,7 +153,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
   const [hasDebt, setHasDebt] = useState<boolean | null>(null);
   const [debtKinds, setDebtKinds] = useState({ consumer: false, house: false });
   const [debtCount, setDebtCount] = useState(1);
-  const [debtRows, setDebtRows] = useState<WizardDebtRow[]>([{ name: '', total: 0, monthly: 0, kind: 'consumer' }]);
+  const [debtRows, setDebtRows] = useState<DebtRowForm[]>([{ name: '', totalStr: '', monthlyStr: '', kind: 'consumer' }]);
   const [emergencyHas, setEmergencyHas] = useState<boolean | null>(null);
   const [emergencyBalanceStr, setEmergencyBalanceStr] = useState('');
   const [emergencyMonthlyStr, setEmergencyMonthlyStr] = useState('');
@@ -133,22 +167,22 @@ export default function OnboardingWizard({ onComplete }: Props) {
   const [classesIntent, setClassesIntent] = useState<string[]>([]);
   const [classesHeld, setClassesHeld] = useState<string[]>([]);
   const [heldOther, setHeldOther] = useState('');
-  const [stocks, setStocks] = useState([{ name: '', buyPrice: 0, qty: 0, mapSym: '' }]);
-  const [cryptos, setCryptos] = useState([{ name: '', buyPrice: 0, qty: 0, mapSym: '' }]);
-  const [immos, setImmos] = useState([
+  const [stocks, setStocks] = useState<StockForm[]>([{ name: '', buyPriceStr: '', qtyStr: '', mapSym: '' }]);
+  const [cryptos, setCryptos] = useState<StockForm[]>([{ name: '', buyPriceStr: '', qtyStr: '', mapSym: '' }]);
+  const [immos, setImmos] = useState<ImmoForm[]>([
     {
       ortPlz: '',
       strasse: '',
-      kaufpreis: 0,
-      wohnflaeche: 0,
-      kaltmiete: 0,
-      nebenkosten: 0,
+      kaufpreisStr: '',
+      wohnflaecheStr: '',
+      kaltmieteStr: '',
+      nebenkostenStr: '',
       letzteErhebung: '',
       zyklusJahre: '',
       mapSym: '',
     },
   ]);
-  const [p2p, setP2p] = useState({ gesamt: 0, profitPct: 0, mapSym: '' });
+  const [p2p, setP2p] = useState<P2pForm>({ gesamtStr: '', profitPctStr: '', mapSym: '' });
   const [why, setWhy] = useState<string[]>([]);
   const [whyOther, setWhyOther] = useState('');
 
@@ -165,10 +199,10 @@ export default function OnboardingWizard({ onComplete }: Props) {
 
   const initDebtRows = (n: number) => {
     const kind0: 'consumer' | 'house' = debtKinds.consumer ? 'consumer' : 'house';
-    const rows: WizardDebtRow[] = Array.from({ length: n }, (_, i) => ({
+    const rows: DebtRowForm[] = Array.from({ length: n }, (_, i) => ({
       name: i === 0 ? 'Dispokredit' : '',
-      total: 0,
-      monthly: 0,
+      totalStr: '',
+      monthlyStr: '',
       kind: debtKinds.consumer && !debtKinds.house ? 'consumer' : !debtKinds.consumer && debtKinds.house ? 'house' : i % 2 === 0 ? 'consumer' : 'house',
     }));
     if (rows.length && debtKinds.consumer && !debtKinds.house) rows.forEach((r) => (r.kind = 'consumer'));
@@ -194,14 +228,43 @@ export default function OnboardingWizard({ onComplete }: Props) {
       sonstigesTopic: topicOther,
       stocks: stocks
         .filter((s) => s.name.trim())
-        .map((s) => ({ ...s, mapSym: s.mapSym?.trim() || undefined })),
+        .map((s) => ({
+          name: s.name,
+          buyPrice: parseNum(s.buyPriceStr) || 0,
+          qty: parseNum(s.qtyStr) || 0,
+          mapSym: s.mapSym?.trim() || undefined,
+        })),
       crypto: cryptos
         .filter((s) => s.name.trim())
-        .map((s) => ({ ...s, mapSym: s.mapSym?.trim() || undefined })),
+        .map((s) => ({
+          name: s.name,
+          buyPrice: parseNum(s.buyPriceStr) || 0,
+          qty: parseNum(s.qtyStr) || 0,
+          mapSym: s.mapSym?.trim() || undefined,
+        })),
       immo: immos
-        .filter((m) => m.ortPlz.trim() || m.kaufpreis > 0)
-        .map((m) => ({ ...m, mapSym: m.mapSym?.trim() || undefined })),
-      p2p: p2p.gesamt > 0 ? [{ ...p2p, mapSym: p2p.mapSym?.trim() || undefined }] : [],
+        .filter((m) => m.ortPlz.trim() || (parseNum(m.kaufpreisStr) || 0) > 0)
+        .map((m) => ({
+          ortPlz: m.ortPlz,
+          strasse: m.strasse,
+          kaufpreis: parseNum(m.kaufpreisStr) || 0,
+          wohnflaeche: parseNum(m.wohnflaecheStr) || 0,
+          kaltmiete: parseNum(m.kaltmieteStr) || 0,
+          nebenkosten: parseNum(m.nebenkostenStr) || 0,
+          letzteErhebung: m.letzteErhebung,
+          zyklusJahre: m.zyklusJahre,
+          mapSym: m.mapSym?.trim() || undefined,
+        })),
+      p2p:
+        (parseNum(p2p.gesamtStr) || 0) > 0
+          ? [
+              {
+                gesamt: parseNum(p2p.gesamtStr) || 0,
+                profitPct: parseNum(p2p.profitPctStr) || 0,
+                mapSym: p2p.mapSym?.trim() || undefined,
+              },
+            ]
+          : [],
     };
   };
 
@@ -212,7 +275,14 @@ export default function OnboardingWizard({ onComplete }: Props) {
       balance: emergencyHas ? Math.max(0, parseNum(emergencyBalanceStr) || 0) : 0,
       monthlyContribution: emergencyHas ? 0 : Math.max(0, parseNum(emergencyMonthlyStr) || 0),
     };
-    const debts: WizardDebtRow[] = hasDebt ? debtRows.map((r) => ({ ...r, total: Math.max(0, r.total), monthly: Math.max(0, r.monthly) })) : [];
+    const debts: WizardDebtRow[] = hasDebt
+      ? debtRows.map((r) => ({
+          name: r.name,
+          total: Math.max(0, parseNum(r.totalStr) || 0),
+          monthly: Math.max(0, parseNum(r.monthlyStr) || 0),
+          kind: r.kind,
+        }))
+      : [];
     const payload: OnboardingV2Payload = {
       financeWho,
       netIncomeMonthly: net,
@@ -252,7 +322,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
   };
   const nextFromDebtEntries = () => {
     for (const r of debtRows) {
-      if (!r.name.trim() || r.total <= 0) return;
+      if (!r.name.trim() || (parseNum(r.totalStr) || 0) <= 0) return;
     }
     go('emergency_yn');
   };
@@ -411,7 +481,13 @@ export default function OnboardingWizard({ onComplete }: Props) {
             </div>
             <div style={W.mood}>Nur für dein Setup — Daten bleiben bei dir 🔒</div>
             <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10 }}>Angabe in € netto pro Monat.</div>
-            <input style={W.input} inputMode="decimal" placeholder="z. B. 3200" value={netIncomeStr} onChange={(e) => setNetIncomeStr(e.target.value)} />
+            <input
+              style={W.input}
+              inputMode="decimal"
+              placeholder="z. B. 3200 oder 3200,50"
+              value={netIncomeStr}
+              onChange={(e) => setNetIncomeStr(normalizeDecimalInput(e.target.value))}
+            />
             <button style={W.btn()} onClick={nextFromNetIncome} disabled={!Number.isFinite(netIncome) || netIncome <= 0}>
               Super — weiter 😊
             </button>
@@ -512,15 +588,23 @@ export default function OnboardingWizard({ onComplete }: Props) {
                   style={{ ...W.input, marginBottom: 8 }}
                   placeholder="Höhe Gesamt (€)"
                   inputMode="decimal"
-                  value={row.total || ''}
-                  onChange={(e) => setDebtRows((prev) => prev.map((r, i) => (i === idx ? { ...r, total: Math.max(0, parseNum(e.target.value) || 0) } : r)))}
+                  value={row.totalStr}
+                  onChange={(e) =>
+                    setDebtRows((prev) =>
+                      prev.map((r, i) => (i === idx ? { ...r, totalStr: normalizeDecimalInput(e.target.value) } : r)),
+                    )
+                  }
                 />
                 <input
                   style={W.input}
                   placeholder="Rate monatlich (€)"
                   inputMode="decimal"
-                  value={row.monthly || ''}
-                  onChange={(e) => setDebtRows((prev) => prev.map((r, i) => (i === idx ? { ...r, monthly: Math.max(0, parseNum(e.target.value) || 0) } : r)))}
+                  value={row.monthlyStr}
+                  onChange={(e) =>
+                    setDebtRows((prev) =>
+                      prev.map((r, i) => (i === idx ? { ...r, monthlyStr: normalizeDecimalInput(e.target.value) } : r)),
+                    )
+                  }
                 />
               </div>
             ))}
@@ -557,7 +641,13 @@ export default function OnboardingWizard({ onComplete }: Props) {
           <>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Wie hoch ist der aktuelle Stand? 💰</div>
             <div style={W.mood}>Nice — du hast schon was liegen! 🙌</div>
-            <input style={W.input} inputMode="decimal" placeholder="€" value={emergencyBalanceStr} onChange={(e) => setEmergencyBalanceStr(e.target.value)} />
+            <input
+              style={W.input}
+              inputMode="decimal"
+              placeholder="€"
+              value={emergencyBalanceStr}
+              onChange={(e) => setEmergencyBalanceStr(normalizeDecimalInput(e.target.value))}
+            />
             <button style={W.btn()} onClick={afterEmergencyBranch}>
               Weiter
             </button>
@@ -570,7 +660,13 @@ export default function OnboardingWizard({ onComplete }: Props) {
               Wie viel möchtet {p.subj === 'ihr' ? 'ihr' : 'du'} monatlich ins Notgroschen legen? 📅
             </div>
             <div style={W.mood}>Jeder Euro zählt — auch kleine Beträge summieren sich.</div>
-            <input style={W.input} inputMode="decimal" placeholder="€ / Monat" value={emergencyMonthlyStr} onChange={(e) => setEmergencyMonthlyStr(e.target.value)} />
+            <input
+              style={W.input}
+              inputMode="decimal"
+              placeholder="€ / Monat"
+              value={emergencyMonthlyStr}
+              onChange={(e) => setEmergencyMonthlyStr(normalizeDecimalInput(e.target.value))}
+            />
             <button style={W.btn()} onClick={afterEmergencyBranch}>
               Weiter
             </button>
@@ -641,7 +737,13 @@ export default function OnboardingWizard({ onComplete }: Props) {
           <>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Wie viel hast du ca. investiert? 🪙</div>
             <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 8 }}>Noch gar nicht? Einfach 0 — auch das ist ein guter Start 🙂</div>
-            <input style={W.input} inputMode="decimal" placeholder="€" value={approxInvStr} onChange={(e) => setApproxInvStr(e.target.value)} />
+            <input
+              style={W.input}
+              inputMode="decimal"
+              placeholder="€"
+              value={approxInvStr}
+              onChange={(e) => setApproxInvStr(normalizeDecimalInput(e.target.value))}
+            />
             <button style={W.btn()} onClick={nextFromAmount}>
               Weiter
             </button>
@@ -652,7 +754,13 @@ export default function OnboardingWizard({ onComplete }: Props) {
           <>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Wie viel möchtest du monatlich investieren? 🐖</div>
             <div style={W.mood}>Sparstrumpf-Modus: auch 25 €/Monat sind ein Ritual mit Wirkung.</div>
-            <input style={W.input} inputMode="decimal" placeholder="€ / Monat" value={monthlyInvStr} onChange={(e) => setMonthlyInvStr(e.target.value)} />
+            <input
+              style={W.input}
+              inputMode="decimal"
+              placeholder="€ / Monat"
+              value={monthlyInvStr}
+              onChange={(e) => setMonthlyInvStr(normalizeDecimalInput(e.target.value))}
+            />
             <button style={W.btn()} onClick={nextFromMonthly}>
               Weiter
             </button>
@@ -736,17 +844,25 @@ export default function OnboardingWizard({ onComplete }: Props) {
                     />
                     <input
                       style={W.input}
+                      inputMode="decimal"
                       placeholder="Kaufpreis €"
-                      value={s.buyPrice || ''}
+                      value={s.buyPriceStr}
                       onChange={(e) =>
-                        setStocks((prev) => prev.map((x, j) => (j === i ? { ...x, buyPrice: parseNum(e.target.value) || 0 } : x)))
+                        setStocks((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, buyPriceStr: normalizeDecimalInput(e.target.value) } : x)),
+                        )
                       }
                     />
                     <input
                       style={W.input}
+                      inputMode="decimal"
                       placeholder="Stückzahl"
-                      value={s.qty || ''}
-                      onChange={(e) => setStocks((prev) => prev.map((x, j) => (j === i ? { ...x, qty: parseNum(e.target.value) || 0 } : x)))}
+                      value={s.qtyStr}
+                      onChange={(e) =>
+                        setStocks((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, qtyStr: normalizeDecimalInput(e.target.value) } : x)),
+                        )
+                      }
                     />
                     <select
                       style={W.input}
@@ -765,7 +881,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                 <button
                   type="button"
                   style={{ ...W.btn(P.mutedBtn), marginTop: 0 }}
-                  onClick={() => setStocks((prev) => [...prev, { name: '', buyPrice: 0, qty: 0, mapSym: '' }])}
+                  onClick={() => setStocks((prev) => [...prev, { name: '', buyPriceStr: '', qtyStr: '', mapSym: '' }])}
                 >
                   + Position
                 </button>
@@ -784,17 +900,25 @@ export default function OnboardingWizard({ onComplete }: Props) {
                     />
                     <input
                       style={W.input}
+                      inputMode="decimal"
                       placeholder="Kaufpreis €"
-                      value={s.buyPrice || ''}
+                      value={s.buyPriceStr}
                       onChange={(e) =>
-                        setCryptos((prev) => prev.map((x, j) => (j === i ? { ...x, buyPrice: parseNum(e.target.value) || 0 } : x)))
+                        setCryptos((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, buyPriceStr: normalizeDecimalInput(e.target.value) } : x)),
+                        )
                       }
                     />
                     <input
                       style={W.input}
+                      inputMode="decimal"
                       placeholder="Stück"
-                      value={s.qty || ''}
-                      onChange={(e) => setCryptos((prev) => prev.map((x, j) => (j === i ? { ...x, qty: parseNum(e.target.value) || 0 } : x)))}
+                      value={s.qtyStr}
+                      onChange={(e) =>
+                        setCryptos((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, qtyStr: normalizeDecimalInput(e.target.value) } : x)),
+                        )
+                      }
                     />
                     <select
                       style={W.input}
@@ -813,7 +937,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                 <button
                   type="button"
                   style={{ ...W.btn(P.mutedBtn), marginTop: 0 }}
-                  onClick={() => setCryptos((prev) => [...prev, { name: '', buyPrice: 0, qty: 0, mapSym: '' }])}
+                  onClick={() => setCryptos((prev) => [...prev, { name: '', buyPriceStr: '', qtyStr: '', mapSym: '' }])}
                 >
                   + Krypto
                 </button>
@@ -826,10 +950,50 @@ export default function OnboardingWizard({ onComplete }: Props) {
                   <div key={i} style={{ border: `1px solid ${P.line}`, borderRadius: 10, padding: 10, marginBottom: 8, display: 'grid', gap: 6 }}>
                     <input style={W.input} placeholder="Ort / PLZ" value={m.ortPlz} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, ortPlz: e.target.value } : x)))} />
                     <input style={W.input} placeholder="Straße" value={m.strasse} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, strasse: e.target.value } : x)))} />
-                    <input style={W.input} placeholder="Kaufpreis €" value={m.kaufpreis || ''} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, kaufpreis: parseNum(e.target.value) || 0 } : x)))} />
-                    <input style={W.input} placeholder="Wohnfläche m²" value={m.wohnflaeche || ''} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, wohnflaeche: parseNum(e.target.value) || 0 } : x)))} />
-                    <input style={W.input} placeholder="Kaltmiete €" value={m.kaltmiete || ''} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, kaltmiete: parseNum(e.target.value) || 0 } : x)))} />
-                    <input style={W.input} placeholder="Nebenkosten €" value={m.nebenkosten || ''} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, nebenkosten: parseNum(e.target.value) || 0 } : x)))} />
+                    <input
+                      style={W.input}
+                      inputMode="decimal"
+                      placeholder="Kaufpreis €"
+                      value={m.kaufpreisStr}
+                      onChange={(e) =>
+                        setImmos((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, kaufpreisStr: normalizeDecimalInput(e.target.value) } : x)),
+                        )
+                      }
+                    />
+                    <input
+                      style={W.input}
+                      inputMode="decimal"
+                      placeholder="Wohnfläche m²"
+                      value={m.wohnflaecheStr}
+                      onChange={(e) =>
+                        setImmos((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, wohnflaecheStr: normalizeDecimalInput(e.target.value) } : x)),
+                        )
+                      }
+                    />
+                    <input
+                      style={W.input}
+                      inputMode="decimal"
+                      placeholder="Kaltmiete €"
+                      value={m.kaltmieteStr}
+                      onChange={(e) =>
+                        setImmos((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, kaltmieteStr: normalizeDecimalInput(e.target.value) } : x)),
+                        )
+                      }
+                    />
+                    <input
+                      style={W.input}
+                      inputMode="decimal"
+                      placeholder="Nebenkosten €"
+                      value={m.nebenkostenStr}
+                      onChange={(e) =>
+                        setImmos((prev) =>
+                          prev.map((x, j) => (j === i ? { ...x, nebenkostenStr: normalizeDecimalInput(e.target.value) } : x)),
+                        )
+                      }
+                    />
                     <input style={W.input} placeholder="Letzte Mieterhöhung (Datum)" value={m.letzteErhebung} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, letzteErhebung: e.target.value } : x)))} />
                     <input style={W.input} placeholder="Erhöhungszyklus (z. B. 3 Jahre)" value={m.zyklusJahre} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, zyklusJahre: e.target.value } : x)))} />
                     <select
@@ -855,10 +1019,10 @@ export default function OnboardingWizard({ onComplete }: Props) {
                       {
                         ortPlz: '',
                         strasse: '',
-                        kaufpreis: 0,
-                        wohnflaeche: 0,
-                        kaltmiete: 0,
-                        nebenkosten: 0,
+                        kaufpreisStr: '',
+                        wohnflaecheStr: '',
+                        kaltmieteStr: '',
+                        nebenkostenStr: '',
                         letzteErhebung: '',
                         zyklusJahre: '',
                         mapSym: '',
@@ -875,15 +1039,17 @@ export default function OnboardingWizard({ onComplete }: Props) {
                 <div style={W.label}>P2P</div>
                 <input
                   style={{ ...W.input, marginBottom: 8 }}
+                  inputMode="decimal"
                   placeholder="Gesamtinvest €"
-                  value={p2p.gesamt || ''}
-                  onChange={(e) => setP2p((x) => ({ ...x, gesamt: parseNum(e.target.value) || 0 }))}
+                  value={p2p.gesamtStr}
+                  onChange={(e) => setP2p((x) => ({ ...x, gesamtStr: normalizeDecimalInput(e.target.value) }))}
                 />
                 <input
                   style={W.input}
+                  inputMode="decimal"
                   placeholder="Profit %"
-                  value={p2p.profitPct || ''}
-                  onChange={(e) => setP2p((x) => ({ ...x, profitPct: parseNum(e.target.value) || 0 }))}
+                  value={p2p.profitPctStr}
+                  onChange={(e) => setP2p((x) => ({ ...x, profitPctStr: normalizeDecimalInput(e.target.value) }))}
                 />
                 <select
                   style={W.input}
