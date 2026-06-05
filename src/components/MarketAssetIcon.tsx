@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from 'react';
+import { allwinPalette } from '../theme/allwinPalette';
 
 export type MarketAssetLogoFields = {
   icon: string;
@@ -15,26 +16,14 @@ type Props = {
 
 /**
  * CDN-Logo wenn `logoUrl` gesetzt und ladbar — sonst Fallback-Zeichen.
- * Heller Kachel-Hintergrund, damit auch helle/weiße Markenlogos sichtbar bleiben.
+ * Dunkler Kachel-Hintergrund (weiße Marken-Logos wie Apple bleiben sichtbar).
  */
 export default function MarketAssetIcon({ item, size, borderRadius, style }: Props) {
   const [imgFailed, setImgFailed] = useState(false);
-  const br = borderRadius ?? Math.max(10, Math.round(size * 0.26));
+  const br = borderRadius ?? Math.max(8, Math.round(size * 0.28));
   const url = item.logoUrl;
   const showImg = Boolean(url && !imgFailed);
-  const pad = Math.max(3, Math.round(size * 0.12));
-
-  const shell: CSSProperties = {
-    width: size,
-    height: size,
-    borderRadius: br,
-    flexShrink: 0,
-    boxSizing: 'border-box',
-    border: '1px solid rgba(255, 255, 255, 0.14)',
-    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.28)',
-    background: 'linear-gradient(165deg, #f4f6f8 0%, #e8ecf1 100%)',
-    ...style,
-  };
+  const pad = Math.max(2, Math.round(size * 0.1));
 
   if (showImg && url) {
     return (
@@ -50,10 +39,16 @@ export default function MarketAssetIcon({ item, size, borderRadius, style }: Pro
         onError={() => setImgFailed(true)}
         draggable={false}
         style={{
-          ...shell,
+          width: size,
+          height: size,
+          borderRadius: br,
           objectFit: 'contain',
           objectPosition: 'center',
           padding: pad,
+          boxSizing: 'border-box',
+          background: allwinPalette.hole,
+          flexShrink: 0,
+          ...style,
         }}
       />
     );
@@ -62,14 +57,16 @@ export default function MarketAssetIcon({ item, size, borderRadius, style }: Pro
   return (
     <div
       style={{
-        ...shell,
+        width: size,
+        height: size,
+        borderRadius: br,
+        background: allwinPalette.hole,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        fontSize: Math.round(size * 0.46),
-        fontWeight: 800,
-        color: '#3d444d',
-        background: 'linear-gradient(165deg, #2a3038 0%, #1c2128 100%)',
+        fontSize: Math.round(size * 0.52),
+        flexShrink: 0,
+        ...style,
       }}
       aria-hidden
     >

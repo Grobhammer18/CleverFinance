@@ -19,7 +19,7 @@ import {
 import { APP_TOUR_STEPS, APP_TOUR_STORAGE_KEY } from '../onboarding/appGuideContent';
 import AppGuideTour from './AppGuideTour';
 import CleverFinanceLogo from './CleverFinanceLogo';
-import MarketAssetIcon from './MarketAssetIcon';
+import MarketAssetIcon, { type MarketAssetLogoFields } from './MarketAssetIcon';
 import HomeChartsSection from './homeCharts/HomeChartsSection';
 import { MAX_DAILY_VERMOGEN_SNAPSHOTS, normalizeDailyVermogenSnapshots, inferChartTimelineEndMs, type DailyVermogenSnapshot } from './homeCharts/homeChartData';
 import { allwinPalette as awBg } from '../theme/allwinPalette';
@@ -864,6 +864,11 @@ function normalizeWatchlistExtrasPersist(raw: unknown): WatchlistExtraPersist[] 
 function fmpStockLogoUrl(sym: string): string {
   const slug = sym.replace(/\./g, '-');
   return `https://financialmodelingprep.com/image-stock/${slug}.png`;
+}
+
+function provisionalLogoFields(symRaw: string, kind: 'stock' | 'crypto', name?: string): MarketAssetLogoFields {
+  const sym = sanitizeWatchlistSymbol(symRaw) || symRaw.trim().toUpperCase().slice(0, 16) || '?';
+  return buildMarketItemFromExtra({ sym, name: name?.trim() || sym, kind });
 }
 
 function buildMarketItemFromExtra(extra: WatchlistExtraPersist): MarketItem {
@@ -4064,6 +4069,32 @@ export default function AllWin() {
       }}
     >
       <div style={{ fontSize: 11, fontWeight: 800, color: '#c9d1d9', marginBottom: 8 }}>Neues Instrument</div>
+      {wlAddSym.trim() ? (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            marginBottom: 10,
+            padding: '10px 12px',
+            borderRadius: 10,
+            background: 'rgba(37, 99, 235, 0.08)',
+            border: '1px solid rgba(37, 99, 235, 0.22)',
+          }}
+        >
+          <MarketAssetIcon item={provisionalLogoFields(wlAddSym, wlAddKind, wlAddName)} size={44} borderRadius={10} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 600, marginBottom: 2 }}>Vorschau</div>
+            <div style={{ fontWeight: 800, fontSize: 14, color: '#e6edf3' }}>
+              {wlAddName.trim() || sanitizeWatchlistSymbol(wlAddSym) || wlAddSym.trim()}
+            </div>
+            <div style={{ fontSize: 10, color: '#8b949e', marginTop: 2 }}>
+              {wlAddKind === 'crypto' ? 'Krypto' : 'Aktie / ETF'}
+              {sanitizeWatchlistSymbol(wlAddSym) ? ` · ${sanitizeWatchlistSymbol(wlAddSym)}` : ''}
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 10, lineHeight: 1.45 }}>
         {opts?.watchlistOnly ? (
           <>
@@ -4145,7 +4176,7 @@ export default function AllWin() {
           <div key={m.sym} style={{ marginBottom: 10 }}>
             <div style={{ ...S.row, marginBottom: 4, gap: 8, alignItems: 'center' as const }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                <MarketAssetIcon item={logoSource} size={40} borderRadius={10} />
+                <MarketAssetIcon item={logoSource} size={32} borderRadius={8} />
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: 13, color: '#e6edf3' }}>{display.title}</div>
                   {display.subtitle ? (
@@ -4271,6 +4302,40 @@ export default function AllWin() {
                   return '';
                 })()}
             </div>
+            {!orderInstrumentAddOpen && (() => {
+              const tradeRow = market.find((m) => m.sym === tradeSym);
+              const tradeDisplay = instrumentDisplayLines(instrumentMetaForSym(tradeSym, market, watchlistExtras));
+              if (!tradeRow) return null;
+              return (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    marginBottom: 10,
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    background: awBg.hole,
+                    border: `1px solid ${awBg.line}`,
+                  }}
+                >
+                  <MarketAssetIcon item={tradeRow} size={44} borderRadius={10} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontWeight: 800, fontSize: 15, color: '#e6edf3' }}>{tradeDisplay.title}</div>
+                    {tradeDisplay.subtitle ? (
+                      <div style={{ fontSize: 11, color: '#8b949e', marginTop: 2 }}>{tradeDisplay.subtitle}</div>
+                    ) : null}
+                    <div style={{ fontSize: 11, color: '#7d8590', marginTop: 4 }}>
+                      Live-Kurs{' '}
+                      <strong style={{ color: '#c9d1d9' }}>
+                        {orderSymLedger.livePx > 0 ? fmt(orderSymLedger.livePx) : '…'}
+                      </strong>
+                      /Stk
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             {!orderInstrumentAddOpen ? (
               <select
                 style={{ ...S.select, marginBottom: 8 }}
@@ -6431,7 +6496,7 @@ export default function AllWin() {
                 textAlign: 'left',
               }}
             >
-              <MarketAssetIcon item={m} size={42} borderRadius={11} />
+              <MarketAssetIcon item={m} size={36} borderRadius={10} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: 14, color: '#e6edf3' }}>{display.title}</div>
                 <div style={{ fontSize: 11, color: '#7d8590', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
