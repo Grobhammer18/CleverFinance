@@ -46,6 +46,28 @@ const fmt = (n: number) =>
 const fmtStk = (n: number) =>
   new Intl.NumberFormat('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 6 }).format(n);
 
+function parseEuroInput(raw: string): number {
+  const s = String(raw).trim().replace(/\s/g, '');
+  if (!s) return 0;
+  const n = parseFloat(s.replace(',', '.'));
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : 0;
+}
+
+function normalizeMoneyDecimalInput(raw: string): string {
+  let digitsBefore = '';
+  let digitsAfter = '';
+  let hasSep = false;
+  for (const ch of String(raw).replace(/\s/g, '')) {
+    if (ch >= '0' && ch <= '9') {
+      if (!hasSep) digitsBefore += ch;
+      else digitsAfter += ch;
+    } else if ((ch === ',' || ch === '.') && !hasSep && digitsBefore.length > 0) {
+      hasSep = true;
+    }
+  }
+  return hasSep ? `${digitsBefore},${digitsAfter}` : digitsBefore;
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
 const CATS = {
@@ -169,6 +191,9 @@ type Transaction = {
   debitsCashDepot?: boolean;
   /** Ausgabe mit Einzahlung ins Cash Depot: Betrag wird dem Broker-Cash gutgeschrieben (Haushalt trotzdem als Ausgabe) */
   creditsCashDepot?: boolean;
+  /** Optional: Gebühr/Steuer (z. B. Dividende brutto im Betrag, netto ins Cash Depot) */
+  feeEur?: number;
+  taxEur?: number;
 };
 
 type MonthBucket = { einnahmen: number; ausgaben: number };
@@ -463,6 +488,8 @@ type FormState = {
   paymentMethod: string;
   /** leer oder Debt-ID als String */
   linkedDebtId: string;
+  feeStr: string;
+  taxStr: string;
 };
 
 /** Offline-Backup pro User — überlebt Refresh, falls Cloud-Sync noch nicht fertig war. */
@@ -640,7 +667,10 @@ function reverseTxSideEffects(
     broker = Math.round((broker - amt) * 100) / 100;
   }
   if (tx.type === 'einnahme' && tx.category === 'Dividende') {
-    broker = Math.round((broker - amt) * 100) / 100;
+    const fee = Math.max(0, tx.feeEur ?? 0);
+    const tax = Math.max(0, tx.taxEur ?? 0);
+    const net = Math.round((amt - fee - tax) * 100) / 100;
+    broker = Math.round((broker - net) * 100) / 100;
   }
   return {
     debts: nextDebts,
@@ -920,6 +950,8 @@ type PortfolioTrade = {
   amount: number;
   pricePerShareEur?: number;
   totalEur?: number;
+  feeEur?: number;
+  taxEur?: number;
 };
 
 function tradeOrderEur(t: PortfolioTrade): number | null {
@@ -929,13 +961,29 @@ function tradeOrderEur(t: PortfolioTrade): number | null {
   return null;
 }
 
+/** Kauf: Gebühren erhöhen die Einstandskosten; Verkauf/Dividende: Gebühr+Steuer mindern Cash. */
+function tradeCashDelta(t: PortfolioTrade): number {
+  const gross = tradeOrderEur(t) ?? 0;
+  const fee = Math.max(0, t.feeEur ?? 0);
+  const tax = Math.max(0, t.taxEur ?? 0);
+  if (t.kind === 'buy') return -(gross + fee + tax);
+  return gross - fee - tax;
+}
+
+function tradeCostBasisEur(t: PortfolioTrade): number | null {
+  const gross = tradeOrderEur(t);
+  if (gross == null) return null;
+  if (t.kind === 'buy') return gross + Math.max(0, t.feeEur ?? 0);
+  return gross;
+}
+
 /** trades: neueste zuerst (wie im State). */
 function fifoSharesAndCost(tradesNewestFirst: PortfolioTrade[], sym: string): { shares: number; costEur: number; avgPerShare: number | null } {
   const seq = [...tradesNewestFirst].filter((t) => t.sym === sym).reverse();
   let shares = 0;
   let cost = 0;
   for (const t of seq) {
-    const eu = tradeOrderEur(t);
+    const eu = t.kind === 'buy' ? tradeCostBasisEur(t) : tradeOrderEur(t);
     if (t.kind === 'buy') {
       if (eu == null) continue;
       shares += t.amount;
@@ -962,15 +1010,14 @@ function reverseTradeOnPortfolio(
   shares: Record<string, number>,
   cash: number,
 ): { shares: Record<string, number>; cash: number } {
-  const eu = tradeOrderEur(t) ?? 0;
   const next = { ...shares };
   if (t.kind === 'buy') {
     next[t.sym] = Math.max(0, (next[t.sym] ?? 0) - t.amount);
     if ((next[t.sym] ?? 0) <= 1e-12) delete next[t.sym];
-    return { shares: next, cash: roundTradeEur(cash + eu) };
+    return { shares: next, cash: roundTradeEur(cash - tradeCashDelta(t)) };
   }
   next[t.sym] = (next[t.sym] ?? 0) + t.amount;
-  return { shares: next, cash: Math.max(0, roundTradeEur(cash - eu)) };
+  return { shares: next, cash: Math.max(0, roundTradeEur(cash - tradeCashDelta(t))) };
 }
 
 /** Depot-Buchung auf Bestand/Cash anwenden (nach Bearbeiten). */
@@ -979,15 +1026,14 @@ function applyTradeOnPortfolio(
   shares: Record<string, number>,
   cash: number,
 ): { shares: Record<string, number>; cash: number } {
-  const eu = tradeOrderEur(t) ?? 0;
   const next = { ...shares };
   if (t.kind === 'buy') {
     next[t.sym] = (next[t.sym] ?? 0) + t.amount;
-    return { shares: next, cash: Math.max(0, roundTradeEur(cash - eu)) };
+    return { shares: next, cash: Math.max(0, roundTradeEur(cash + tradeCashDelta(t))) };
   }
   next[t.sym] = Math.max(0, (next[t.sym] ?? 0) - t.amount);
   if ((next[t.sym] ?? 0) <= 1e-12) delete next[t.sym];
-  return { shares: next, cash: roundTradeEur(cash + eu) };
+  return { shares: next, cash: roundTradeEur(cash + tradeCashDelta(t)) };
 }
 
 const ADD_INSTRUMENT_SELECT_VALUE = '__cf_add_instrument__';
@@ -1009,6 +1055,12 @@ function normalizePortfolioTrades(raw: unknown, allowedSyms: Set<string>): Portf
       typeof ppsRaw === 'number' && !Number.isNaN(ppsRaw) && ppsRaw >= 0 ? ppsRaw : undefined;
     const totalRaw = r.totalEur;
     const totalEur = typeof totalRaw === 'number' && !Number.isNaN(totalRaw) && totalRaw >= 0 ? totalRaw : undefined;
+    const feeRaw = r.feeEur;
+    const taxRaw = r.taxEur;
+    const feeEur =
+      typeof feeRaw === 'number' && !Number.isNaN(feeRaw) && feeRaw >= 0 ? feeRaw : undefined;
+    const taxEur =
+      typeof taxRaw === 'number' && !Number.isNaN(taxRaw) && taxRaw >= 0 ? taxRaw : undefined;
     out.push({
       id: id || `${sym}-${at}-${amount}`,
       at,
@@ -1017,6 +1069,8 @@ function normalizePortfolioTrades(raw: unknown, allowedSyms: Set<string>): Portf
       amount,
       pricePerShareEur,
       totalEur,
+      feeEur,
+      taxEur,
     });
   }
   return out.slice(0, 60);
@@ -1641,6 +1695,8 @@ export default function AllWin() {
     date: todayIsoDate(),
     paymentMethod: '',
     linkedDebtId: '',
+    feeStr: '',
+    taxStr: '',
   });
   const [toast, setToast] = useState<ToastState>(null);
   const [market, setMarket] = useState<MarketItem[]>(() => mergedWatchlistFromExtras(readWatchlistExtrasFromLocal()));
@@ -1678,10 +1734,14 @@ export default function AllWin() {
   const [tradeMode, setTradeMode] = useState<'buy' | 'sell'>('buy');
   const [tradeSym, setTradeSym] = useState(BASE_MARKET[0].sym);
   const [tradeAmount, setTradeAmount] = useState('');
+  const [tradeFeeStr, setTradeFeeStr] = useState('');
+  const [tradeTaxStr, setTradeTaxStr] = useState('');
   const [levelUpTradesOpen, setLevelUpTradesOpen] = useState(true);
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
   const [tradeEditAmount, setTradeEditAmount] = useState('');
   const [tradeEditPrice, setTradeEditPrice] = useState('');
+  const [tradeEditFeeStr, setTradeEditFeeStr] = useState('');
+  const [tradeEditTaxStr, setTradeEditTaxStr] = useState('');
   const [tradeEditDate, setTradeEditDate] = useState('');
   const [wlAddSym, setWlAddSym] = useState('');
   const [wlAddName, setWlAddName] = useState('');
@@ -2916,19 +2976,28 @@ export default function AllWin() {
         return;
       }
     }
+    const feeEur = parseEuroInput(tradeFeeStr);
+    const taxEur = parseEuroInput(tradeTaxStr);
     if (tradeMode === 'buy') {
       const cashAvail = roundEUR(portfolioBrokerCash);
       const wishSpend = roundEUR(n * px);
-      const spend = Math.min(wishSpend, cashAvail);
+      const cashForShares = Math.max(0, roundEUR(cashAvail - feeEur - taxEur));
+      const spend = Math.min(wishSpend, cashForShares);
       if (spend <= 0) {
-        showToast('Kein Cash im Cash Depot — Betrag dort erhöhen (LevelUp · Cash Depot bearbeiten).', 'error');
+        showToast(
+          feeEur + taxEur >= cashAvail
+            ? 'Nicht genug Cash Depot für Order inkl. Gebühr/Steuer.'
+            : 'Kein Cash im Cash Depot — Betrag dort erhöhen (LevelUp · Cash Depot bearbeiten).',
+          'error',
+        );
         return;
       }
       const sharesAdded = spend / px;
+      const cashOut = roundEUR(spend + feeEur + taxEur);
       setPortfolioExcludedBaseSyms((prev) => prev.filter((x) => x !== sym));
       setPortfolioShares((prev) => ({ ...prev, [sym]: (prev[sym] ?? 0) + sharesAdded }));
       setPortfolioBrokerCash((prev) => {
-        const next = roundEUR(roundEUR(prev) - spend);
+        const next = roundEUR(roundEUR(prev) - cashOut);
         return next < 0 ? 0 : next;
       });
       setPortfolioTrades((prev) =>
@@ -2941,15 +3010,20 @@ export default function AllWin() {
             amount: sharesAdded,
             pricePerShareEur: roundEUR(px),
             totalEur: roundEUR(spend),
+            ...(feeEur > 0 ? { feeEur } : {}),
+            ...(taxEur > 0 ? { taxEur } : {}),
           },
           ...prev,
         ].slice(0, 60),
       );
       setTradeAmount('');
-      const cappedByCash = wishSpend > cashAvail + 1e-9;
+      setTradeFeeStr('');
+      setTradeTaxStr('');
+      const cappedByCash = wishSpend > cashForShares + 1e-9;
+      const feeHint = feeEur + taxEur > 0 ? ` · inkl. Gebühr/Steuer ${fmt(feeEur + taxEur)}` : '';
       const msg = cappedByCash
-        ? `🟢 +${fmtStk(sharesAdded)} Stk ${sym} für ${fmt(spend)} (gekappt — nicht genug Cash Depot)`
-        : `🟢 +${fmtStk(sharesAdded)} Stk ${sym} (~${fmt(spend)})`;
+        ? `🟢 +${fmtStk(sharesAdded)} Stk ${sym} für ${fmt(spend)}${feeHint} (gekappt — nicht genug Cash Depot)`
+        : `🟢 +${fmtStk(sharesAdded)} Stk ${sym} (~${fmt(spend)}${feeHint})`;
       showToast(msg);
       return;
     }
@@ -2961,10 +3035,15 @@ export default function AllWin() {
     }
     const capped = sold < n - 1e-12;
     const proceeds = roundEUR(sold * px);
+    const netProceeds = roundEUR(proceeds - feeEur - taxEur);
+    if (netProceeds < -0.001) {
+      showToast('Gebühr + Steuer übersteigen den Verkaufserlös.', 'error');
+      return;
+    }
     const fullySold = opts?.sellAll === true && !capped && held - sold <= 1e-12;
     const isBase = BASE_SYM_SET.has(sym);
     setPortfolioShares((prev) => ({ ...prev, [sym]: held - sold }));
-    setPortfolioBrokerCash((prev) => roundEUR(roundEUR(prev) + proceeds));
+    setPortfolioBrokerCash((prev) => roundEUR(Math.max(0, roundEUR(prev) + netProceeds)));
     const newTrade: PortfolioTrade = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       at: new Date().toLocaleString('de-DE'),
@@ -2973,6 +3052,8 @@ export default function AllWin() {
       amount: sold,
       pricePerShareEur: roundEUR(px),
       totalEur: roundEUR(proceeds),
+      ...(feeEur > 0 ? { feeEur } : {}),
+      ...(taxEur > 0 ? { taxEur } : {}),
     };
     setPortfolioTrades((prev) => [newTrade, ...(fullySold && !isBase ? prev.filter((t) => t.sym !== sym) : prev)].slice(0, 60));
     if (fullySold && !isBase) {
@@ -2985,6 +3066,9 @@ export default function AllWin() {
       });
     }
     setTradeAmount('');
+    setTradeFeeStr('');
+    setTradeTaxStr('');
+    const feeHint = feeEur + taxEur > 0 ? ` (netto ${fmt(netProceeds)} nach Gebühr/Steuer)` : '';
     let baselineExcluded = false;
     if (fullySold && isBase) {
       const hypotheticalExcluded = Array.from(new Set([...portfolioExcludedBaseSyms, sym]));
@@ -3004,12 +3088,12 @@ export default function AllWin() {
     }
     showToast(
       fullySold && !isBase
-        ? `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(proceeds)} — Titel wurde entfernt`
+        ? `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(netProceeds)}${feeHint} — Titel wurde entfernt`
         : fullySold && isBase && baselineExcluded
-          ? `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(proceeds)} — unter Portfolio ausgeblendet`
+          ? `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(netProceeds)}${feeHint} — unter Portfolio ausgeblendet`
           : fullySold && isBase
-            ? `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(proceeds)} · Ausblendung nicht möglich (letzter sichtbarer Standard-Titel); Live unverändert`
-            : `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(proceeds)} ins Cash Depot${capped ? ' (max. Bestand)' : ''}`,
+            ? `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(netProceeds)}${feeHint} · Ausblendung nicht möglich (letzter sichtbarer Standard-Titel); Live unverändert`
+            : `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(netProceeds)}${feeHint} ins Cash Depot${capped ? ' (max. Bestand)' : ''}`,
     );
   };
 
@@ -3019,6 +3103,8 @@ export default function AllWin() {
     setTradeEditPrice(
       typeof t.pricePerShareEur === 'number' ? String(t.pricePerShareEur).replace('.', ',') : '',
     );
+    setTradeEditFeeStr(typeof t.feeEur === 'number' && t.feeEur > 0 ? String(t.feeEur).replace('.', ',') : '');
+    setTradeEditTaxStr(typeof t.taxEur === 'number' && t.taxEur > 0 ? String(t.taxEur).replace('.', ',') : '');
     setTradeEditDate(t.at);
   };
 
@@ -3026,6 +3112,8 @@ export default function AllWin() {
     setEditingTradeId(null);
     setTradeEditAmount('');
     setTradeEditPrice('');
+    setTradeEditFeeStr('');
+    setTradeEditTaxStr('');
     setTradeEditDate('');
   };
 
@@ -3054,6 +3142,8 @@ export default function AllWin() {
       showToast('Bitte gültigen Kurs je Stück eingeben.', 'error');
       return;
     }
+    const feeEur = parseEuroInput(tradeEditFeeStr);
+    const taxEur = parseEuroInput(tradeEditTaxStr);
     const updated: PortfolioTrade = {
       ...old,
       amount,
@@ -3061,6 +3151,10 @@ export default function AllWin() {
       totalEur: roundTradeEur(amount * price),
       at: tradeEditDate.trim() || old.at,
     };
+    if (feeEur > 0) updated.feeEur = feeEur;
+    else delete updated.feeEur;
+    if (taxEur > 0) updated.taxEur = taxEur;
+    else delete updated.taxEur;
     let shares = portfolioShares;
     let cash = portfolioBrokerCash;
     const rev = reverseTradeOnPortfolio(old, shares, cash);
@@ -3084,6 +3178,8 @@ export default function AllWin() {
       date: todayIsoDate(),
       paymentMethod: '',
       linkedDebtId: '',
+      feeStr: '',
+      taxStr: '',
     });
   };
 
@@ -3187,21 +3283,28 @@ export default function AllWin() {
     setMoneyFormOpen(true);
     setForm({
       type: tx.type,
-      amount: String(tx.amount),
+      amount: String(tx.amount).replace('.', ','),
       category: tx.category,
       note: tx.note || '',
       date: txDateToInputValue(tx.date),
       paymentMethod: tx.paymentMethod || '',
       linkedDebtId: tx.linkedDebtId != null ? String(tx.linkedDebtId) : '',
+      feeStr: typeof tx.feeEur === 'number' && tx.feeEur > 0 ? String(tx.feeEur).replace('.', ',') : '',
+      taxStr: typeof tx.taxEur === 'number' && tx.taxEur > 0 ? String(tx.taxEur).replace('.', ',') : '',
     });
     showToast('Buchung zum Bearbeiten geladen — unten anpassen und speichern.', 'success');
   };
 
   const addTx = () => {
-    if (!form.amount || Number.isNaN(+form.amount)) return;
     const rawAmt = parseFloat(String(form.amount).replace(/\s/g, '').replace(',', '.'));
-    if (Number.isNaN(rawAmt) || rawAmt <= 0) return;
+    if (!String(form.amount).trim() || Number.isNaN(rawAmt) || rawAmt <= 0) return;
     const amt = Math.round(rawAmt * 100) / 100;
+    const feeEur = parseEuroInput(form.feeStr);
+    const taxEur = parseEuroInput(form.taxStr);
+    if (form.type === 'einnahme' && form.category === 'Dividende' && amt - feeEur - taxEur < -0.001) {
+      showToast('Gebühr + Steuer dürfen den Bruttobetrag nicht übersteigen.', 'error');
+      return;
+    }
 
     const oldTx = editingTxId != null ? transactions.find((t) => t.id === editingTxId) : undefined;
     let workDebts = debts;
@@ -3287,13 +3390,15 @@ export default function AllWin() {
 
     let brokerCashAfterDividend: number | undefined;
     if (form.type === 'einnahme' && form.category === 'Dividende') {
-      brokerCashAfterDividend = Math.round((workBroker + amt) * 100) / 100;
+      const net = Math.round((amt - feeEur - taxEur) * 100) / 100;
+      brokerCashAfterDividend = Math.round((workBroker + net) * 100) / 100;
     }
 
-    const { paymentMethod, linkedDebtId: _ld, ...rest } = form;
+    const { paymentMethod, linkedDebtId: _ld, feeStr: _fee, taxStr: _tax, ...rest } = form;
     const txDate = /^\d{4}-\d{2}-\d{2}$/.test(form.date) ? form.date : todayIsoDate();
     const row: Transaction = {
       ...rest,
+      amount: amt,
       id: editingTxId ?? Date.now(),
       date: txDate,
       ...(paymentMethod ? { paymentMethod } : {}),
@@ -3304,6 +3409,8 @@ export default function AllWin() {
       ...(form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen' ? { debitsNotgroschen: true } : {}),
       ...(form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot' ? { debitsCashDepot: true } : {}),
       ...(form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot' ? { creditsCashDepot: true } : {}),
+      ...(form.type === 'einnahme' && form.category === 'Dividende' && feeEur > 0 ? { feeEur } : {}),
+      ...(form.type === 'einnahme' && form.category === 'Dividende' && taxEur > 0 ? { taxEur } : {}),
     };
     const baseTx = editingTxId != null ? transactions.filter((t) => t.id !== editingTxId) : transactions;
     const nextTransactions = [row, ...baseTx];
@@ -3367,7 +3474,9 @@ export default function AllWin() {
     } else if (form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot' && brokerCashAfterEinzahlung !== undefined) {
       showToast(`💎 +${fmt(amt)} ins Cash Depot eingezahlt — Stand jetzt ${fmt(brokerCashAfterEinzahlung)}`);
     } else if (form.type === 'einnahme' && form.category === 'Dividende' && brokerCashAfterDividend !== undefined) {
-      showToast(`💸 Dividende gebucht — Cash Depot jetzt ${fmt(brokerCashAfterDividend)}`);
+      const net = Math.round((amt - feeEur - taxEur) * 100) / 100;
+      const feeHint = feeEur + taxEur > 0 ? ` (netto ${fmt(net)} nach Gebühr/Steuer)` : '';
+      showToast(`💸 Dividende gebucht${feeHint} — Cash Depot jetzt ${fmt(brokerCashAfterDividend)}`);
     } else {
       let msg = wasEdit
         ? '✏️ Buchung aktualisiert!'
@@ -4374,6 +4483,25 @@ export default function AllWin() {
                     </button>
                   ) : null}
                 </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const, marginBottom: 8 }}>
+                  <input
+                    style={{ ...S.input, flex: '1 1 100px', marginTop: 0, marginBottom: 0, minWidth: 0 }}
+                    inputMode="decimal"
+                    placeholder="Gebühr € (optional)"
+                    value={tradeFeeStr}
+                    onChange={(e) => setTradeFeeStr(normalizeMoneyDecimalInput(e.target.value))}
+                  />
+                  <input
+                    style={{ ...S.input, flex: '1 1 100px', marginTop: 0, marginBottom: 0, minWidth: 0 }}
+                    inputMode="decimal"
+                    placeholder="Steuer € (optional)"
+                    value={tradeTaxStr}
+                    onChange={(e) => setTradeTaxStr(normalizeMoneyDecimalInput(e.target.value))}
+                  />
+                </div>
+                <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.4 }}>
+                  Grobe Planung: Ordergebühr und Steuer manuell — z. B. 1,00 oder 26,38. Kauf: zusätzlich zum Kurswert; Verkauf: vom Erlös abgezogen.
+                </div>
                 <button
                   type="button"
                   style={{ ...S.btn(tradeMode === 'sell' ? '#cf222e' : undefined), marginTop: 0 }}
@@ -4469,6 +4597,12 @@ export default function AllWin() {
                                         · Summe <strong>{fmt(eu)}</strong>
                                       </>
                                     ) : null}
+                                    {(t.feeEur ?? 0) + (t.taxEur ?? 0) > 0 ? (
+                                      <span style={{ color: '#8b949e' }}>
+                                        {' '}
+                                        · Gebühr/Steuer {fmt((t.feeEur ?? 0) + (t.taxEur ?? 0))}
+                                      </span>
+                                    ) : null}
                                   </div>
                                   <div style={{ fontSize: 10, color: '#7d8590', marginTop: 4 }}>{t.at}</div>
                                 </div>
@@ -4517,6 +4651,22 @@ export default function AllWin() {
                                 value={tradeEditPrice}
                                 onChange={(e) => setTradeEditPrice(e.target.value)}
                               />
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <input
+                                  style={{ ...S.input, flex: 1, marginTop: 0, marginBottom: 0 }}
+                                  inputMode="decimal"
+                                  placeholder="Gebühr €"
+                                  value={tradeEditFeeStr}
+                                  onChange={(e) => setTradeEditFeeStr(normalizeMoneyDecimalInput(e.target.value))}
+                                />
+                                <input
+                                  style={{ ...S.input, flex: 1, marginTop: 0, marginBottom: 0 }}
+                                  inputMode="decimal"
+                                  placeholder="Steuer €"
+                                  value={tradeEditTaxStr}
+                                  onChange={(e) => setTradeEditTaxStr(normalizeMoneyDecimalInput(e.target.value))}
+                                />
+                              </div>
                               <input
                                 style={{ ...S.input, marginTop: 0, marginBottom: 0 }}
                                 placeholder="Datum / Notiz"
@@ -4928,7 +5078,11 @@ export default function AllWin() {
             const boost = tx.linkedDebtName ? `Boost: ${tx.linkedDebtName}` : '';
             const ng = tx.fillsNotgroschen ? 'Home: Notgroschen +' : tx.debitsNotgroschen ? 'Home: Notgroschen −' : '';
             const cd = tx.debitsCashDepot ? 'LevelUp: Cash −' : tx.creditsCashDepot ? 'LevelUp: Cash +' : '';
-            const bits = [boost, ng, cd, tx.paymentMethod, tx.note].filter(Boolean);
+            const divFee =
+              tx.type === 'einnahme' && tx.category === 'Dividende' && ((tx.feeEur ?? 0) > 0 || (tx.taxEur ?? 0) > 0)
+                ? `netto Cash ${fmt(Math.round((txAmountNum(tx) - (tx.feeEur ?? 0) - (tx.taxEur ?? 0)) * 100) / 100)}`
+                : '';
+            const bits = [boost, ng, cd, divFee, tx.paymentMethod, tx.note].filter(Boolean);
             const sub = bits.join(' · ');
             return sub ? `${sub} · ${formatTxDateLabel(tx.date)}` : formatTxDateLabel(tx.date);
           })()}
@@ -5241,6 +5395,8 @@ export default function AllWin() {
                   type: t as 'einnahme' | 'ausgabe',
                   category: CATS[t === 'einnahme' ? 'einnahmen' : 'ausgaben'][0],
                   linkedDebtId: '',
+                  feeStr: '',
+                  taxStr: '',
                   paymentMethod:
                     t === 'einnahme' && (f.paymentMethod === 'Notgroschen' || f.paymentMethod === 'Cash Depot' || f.paymentMethod === 'Einzahlung Cash Depot')
                       ? ''
@@ -5253,7 +5409,36 @@ export default function AllWin() {
           ))}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <input style={S.input} type="number" placeholder="Betrag in €" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} />
+          <input
+            style={S.input}
+            inputMode="decimal"
+            placeholder="Betrag in € (z. B. 3200,50)"
+            value={form.amount}
+            onChange={(e) => setForm((f) => ({ ...f, amount: normalizeMoneyDecimalInput(e.target.value) }))}
+          />
+          {form.type === 'einnahme' && form.category === 'Dividende' && (
+            <>
+              <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.45 }}>
+                💸 Bruttobetrag oben — optional Gebühr/Steuer abziehen; netto landet im Cash Depot (LevelUp).
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  style={{ ...S.input, flex: 1, marginTop: 0, marginBottom: 0 }}
+                  inputMode="decimal"
+                  placeholder="Gebühr € (optional)"
+                  value={form.feeStr}
+                  onChange={(e) => setForm((f) => ({ ...f, feeStr: normalizeMoneyDecimalInput(e.target.value) }))}
+                />
+                <input
+                  style={{ ...S.input, flex: 1, marginTop: 0, marginBottom: 0 }}
+                  inputMode="decimal"
+                  placeholder="Steuer € (optional)"
+                  value={form.taxStr}
+                  onChange={(e) => setForm((f) => ({ ...f, taxStr: normalizeMoneyDecimalInput(e.target.value) }))}
+                />
+              </div>
+            </>
+          )}
           <label style={{ fontSize: 11, color: '#7d8590', fontWeight: 600 }}>Datum</label>
           <input
             style={S.input}
@@ -5266,7 +5451,13 @@ export default function AllWin() {
             value={form.category}
             onChange={(e) => {
               const v = e.target.value;
-              setForm((f) => ({ ...f, category: v, linkedDebtId: v === 'Kreditrate' ? f.linkedDebtId : '' }));
+              setForm((f) => ({
+                ...f,
+                category: v,
+                linkedDebtId: v === 'Kreditrate' ? f.linkedDebtId : '',
+                feeStr: v === 'Dividende' ? f.feeStr : '',
+                taxStr: v === 'Dividende' ? f.taxStr : '',
+              }));
             }}
           >
             {(form.type === 'einnahme' ? CATS.einnahmen : CATS.ausgaben).map((c) => (
