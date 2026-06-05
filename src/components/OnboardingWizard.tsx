@@ -386,7 +386,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
 
   const Bar = ({ pct }: { pct: number }) => (
     <div style={{ background: '#1a1f2e', borderRadius: 99, height: 6, overflow: 'hidden', marginBottom: 14 }}>
-      <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: '#2563eb', borderRadius: 99, transition: 'width 0.3s ease' }} />
+      <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: '#2563eb', borderRadius: 99 }} />
     </div>
   );
 

@@ -202,7 +202,7 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
             border: '2px solid #58a6ff',
             pointerEvents: 'none',
             zIndex: 100001,
-            transition: 'left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease',
+            transition: 'left 0.15s ease, top 0.15s ease, width 0.15s ease, height 0.15s ease',
           }}
         />
       );

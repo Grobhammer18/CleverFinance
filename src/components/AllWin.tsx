@@ -1084,7 +1084,6 @@ const Bar = ({ pct, color }: { pct: number; color: string }) => (
         height: '100%',
         background: color,
         borderRadius: 99,
-        transition: 'width 0.8s ease',
       }}
     />
   </div>
@@ -1107,31 +1106,23 @@ const Spark = ({ data, color }: { data: number[]; color: string }) => {
   );
 };
 
-type ConfettiPiece = { left: number; delay: number; duration: number; drift: number; rot: number; hue: string; w: number; h: number };
-
-function buildConfettiPieces(seed: number, count: number): ConfettiPiece[] {
-  let s = seed % 2147483646 || 1;
-  const rnd = () => {
-    s = (s * 48271) % 2147483647;
-    return (s % 10000) / 10000;
-  };
-  const hues = ['#2563eb', '#ffd700', '#a855f7', '#ff7b7b', '#5b93ff', '#f0883e', '#93c5fd', '#f8d03a'];
-  return Array.from({ length: count }, (_, i) => ({
-    left: rnd() * 100,
-    delay: rnd() * 0.65,
-    duration: 2.1 + rnd() * 1.6,
-    drift: (rnd() - 0.5) * 220,
-    rot: 360 + rnd() * 540,
-    hue: hues[i % hues.length],
-    w: 5 + rnd() * 7,
-    h: 6 + rnd() * 10,
-  }));
-}
-
-function DebtZeroVictoryOverlay({ open, seed, onClose }: { open: boolean; seed: number; onClose: () => void }) {
-  const pieces = useMemo(() => buildConfettiPieces(seed, 56), [seed]);
+/** Ruhiger Bestätigungs-Dialog — ohne Konfetti oder Pop-Animationen. */
+function CelebrationCard({
+  open,
+  onClose,
+  zIndex,
+  title,
+  body,
+  actionLabel,
+}: {
+  open: boolean;
+  onClose: () => void;
+  zIndex: number;
+  title: string;
+  body: string;
+  actionLabel: string;
+}) {
   if (!open) return null;
-
   return (
     <div
       role="presentation"
@@ -1139,483 +1130,98 @@ function DebtZeroVictoryOverlay({ open, seed, onClose }: { open: boolean; seed: 
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 5000,
+        zIndex,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         padding: 20,
-        background: 'rgba(0,0,0,0.78)',
-        WebkitBackdropFilter: 'blur(10px)',
-        backdropFilter: 'blur(10px)',
+        background: 'rgba(0,0,0,0.72)',
       }}
     >
-      <style>{`
-        @keyframes awVictoryPop {
-          0% { transform: scale(0.88) translateY(12px); opacity: 0; }
-          70% { transform: scale(1.02) translateY(0); opacity: 1; }
-          100% { transform: scale(1) translateY(0); opacity: 1; }
-        }
-        @keyframes awConfettiFall {
-          0% { transform: translate3d(0, -12px, 0) rotate(0deg); opacity: 1; }
-          100% { transform: translate3d(var(--drift), 88vh, 0) rotate(var(--rot)); opacity: 0.92; }
-        }
-      `}</style>
-
-      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' as const }}>
-        {pieces.map((p, i) => (
-          <div
-            key={i}
-            style={
-              {
-                position: 'absolute',
-                left: `${p.left}%`,
-                top: '-4%',
-                width: p.w,
-                height: p.h,
-                borderRadius: 2,
-                background: p.hue,
-                boxShadow: '0 0 6px rgba(0,0,0,0.25)',
-                animation: `awConfettiFall ${p.duration}s cubic-bezier(0.22, 0.61, 0.36, 1) forwards`,
-                animationDelay: `${p.delay}s`,
-                ['--drift' as string]: `${p.drift}px`,
-                ['--rot' as string]: `${p.rot}deg`,
-              } as CSSProperties
-            }
-          />
-        ))}
-      </div>
-
       <div
         role="dialog"
         aria-modal="true"
-        aria-labelledby="debt-victory-title"
         onClick={(e) => e.stopPropagation()}
         style={{
-          position: 'relative',
-          maxWidth: 360,
+          maxWidth: 380,
           width: '100%',
-          borderRadius: 20,
-          padding: '28px 22px 22px',
-          textAlign: 'center' as const,
-          background: 'linear-gradient(165deg, #1a1520 0%, #0c0c10 45%, #0a1612 100%)',
-          border: '1px solid rgba(255, 215, 0, 0.45)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(37, 99, 235,0.12), inset 0 1px 0 rgba(255,255,255,0.06)',
-          animation: 'awVictoryPop 0.55s ease-out forwards',
+          borderRadius: 16,
+          padding: '24px 20px',
+          background: '#161b22',
+          border: '1px solid #30363d',
+          boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
         }}
       >
-        <div style={{ fontSize: 56, lineHeight: 1, marginBottom: 6 }}>🏆</div>
-        <div
-          id="debt-victory-title"
-          style={{
-            fontSize: 22,
-            fontWeight: 900,
-            letterSpacing: -0.5,
-            background: 'linear-gradient(90deg, #ffd700, #fff8dc, #93c5fd)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          }}
-        >
-          Boost-Orden verliehen!
-        </div>
-        <div style={{ fontSize: 13, color: '#8b949e', marginTop: 10, lineHeight: 1.5 }}>
-          Alle Schulden sind weg — du hast dir den <span style={{ color: '#ffd700', fontWeight: 800 }}>Clever Finance Schulden-frei Orden</span> redlich
-          verdient. Feier den Moment! 🎉
-        </div>
-        <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center', gap: 6, alignItems: 'center' }}>
-          <span style={{ fontSize: 28 }}>🎖️</span>
-          <span style={{ fontSize: 28 }}>✨</span>
-          <span style={{ fontSize: 28 }}>🥇</span>
-        </div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: '#e6edf3', lineHeight: 1.35 }}>{title}</div>
+        <div style={{ fontSize: 13, color: '#8b949e', marginTop: 10, lineHeight: 1.55 }}>{body}</div>
         <button
           type="button"
           style={{
-            marginTop: 22,
+            marginTop: 20,
             width: '100%',
-            padding: '14px 18px',
-            borderRadius: 12,
+            padding: '12px 18px',
+            borderRadius: 10,
             border: 'none',
-            fontWeight: 900,
-            fontSize: 15,
+            fontWeight: 700,
+            fontSize: 14,
             cursor: 'pointer',
             color: '#0d1117',
-            background: 'linear-gradient(90deg, #2563eb, #93c5fd)',
-            boxShadow: '0 10px 28px rgba(37, 99, 235, 0.35)',
+            background: '#2563eb',
           }}
           onClick={onClose}
         >
-          Weiter — ich strahle! ✨
+          {actionLabel}
         </button>
       </div>
     </div>
   );
 }
 
-function NotgroschenFullOverlay({ open, seed, onClose }: { open: boolean; seed: number; onClose: () => void }) {
-  const pieces = useMemo(() => buildConfettiPieces(seed, 60), [seed]);
-  if (!open) return null;
-
+function DebtZeroVictoryOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <div
-      role="presentation"
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 5001,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
-        background: 'rgba(0,0,0,0.78)',
-        WebkitBackdropFilter: 'blur(10px)',
-        backdropFilter: 'blur(10px)',
-      }}
-    >
-      <style>{`
-        @keyframes awNgVictoryPop {
-          0% { transform: scale(0.88) translateY(12px); opacity: 0; }
-          70% { transform: scale(1.02) translateY(0); opacity: 1; }
-          100% { transform: scale(1) translateY(0); opacity: 1; }
-        }
-        @keyframes awNgConfettiFall {
-          0% { transform: translate3d(0, -12px, 0) rotate(0deg); opacity: 1; }
-          100% { transform: translate3d(var(--drift), 88vh, 0) rotate(var(--rot)); opacity: 0.92; }
-        }
-      `}</style>
+    <CelebrationCard
+      open={open}
+      onClose={onClose}
+      zIndex={5000}
+      title="Alle Schulden abbezahlt"
+      body="Du hast alle offenen Boost-Schulden tilgt. Guter Meilenstein — als Nächstes lohnt sich konsequent Sparen und Investieren."
+      actionLabel="Weiter"
+    />
+  );
+}
 
-      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' as const }}>
-        {pieces.map((p, i) => (
-          <div
-            key={i}
-            style={
-              {
-                position: 'absolute',
-                left: `${p.left}%`,
-                top: '-4%',
-                width: p.w,
-                height: p.h,
-                borderRadius: 2,
-                background: p.hue,
-                boxShadow: '0 0 6px rgba(0,0,0,0.25)',
-                animation: `awNgConfettiFall ${p.duration}s cubic-bezier(0.22, 0.61, 0.36, 1) forwards`,
-                animationDelay: `${p.delay}s`,
-                ['--drift' as string]: `${p.drift}px`,
-                ['--rot' as string]: `${p.rot}deg`,
-              } as CSSProperties
-            }
-          />
-        ))}
-      </div>
-
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="notgroschen-victory-title"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          position: 'relative',
-          maxWidth: 380,
-          width: '100%',
-          borderRadius: 20,
-          padding: '28px 22px 22px',
-          textAlign: 'center' as const,
-          background: 'linear-gradient(165deg, #0c1628 0%, #0c0c12 48%, #0a1420 100%)',
-          border: '1px solid rgba(91, 147, 255, 0.55)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(91,147,255,0.15), inset 0 1px 0 rgba(255,255,255,0.06)',
-          animation: 'awNgVictoryPop 0.55s ease-out forwards',
-        }}
-      >
-        <div style={{ fontSize: 52, lineHeight: 1, marginBottom: 8 }}>🏆</div>
-        <div
-          id="notgroschen-victory-title"
-          style={{
-            fontSize: 21,
-            fontWeight: 900,
-            letterSpacing: -0.4,
-            lineHeight: 1.25,
-            background: 'linear-gradient(90deg, #5b93ff, #a5d6ff, #ffd700)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          }}
-        >
-          Herzlichen Glückwunsch!
-        </div>
-        <div style={{ fontSize: 15, fontWeight: 800, color: '#e6edf3', marginTop: 10, lineHeight: 1.45 }}>
-          Du hast dein Notgroschen gefüllt.
-        </div>
-        <div style={{ fontSize: 13, color: '#8b949e', marginTop: 8, lineHeight: 1.55 }}>
-          Dein Polster ist am Ziel — du bist vorbereitet. Feier den Moment mit Konfetti, Pokal und gutem Gefühl. 🛡️
-        </div>
-        <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 30 }}>🎉</span>
-          <span style={{ fontSize: 30 }}>🥇</span>
-          <span style={{ fontSize: 30 }}>✨</span>
-          <span style={{ fontSize: 30 }}>🛡️</span>
-        </div>
-        <button
-          type="button"
-          style={{
-            marginTop: 22,
-            width: '100%',
-            padding: '14px 18px',
-            borderRadius: 12,
-            border: 'none',
-            fontWeight: 900,
-            fontSize: 15,
-            cursor: 'pointer',
-            color: '#0d1117',
-            background: 'linear-gradient(90deg, #5b93ff, #7eb6ff)',
-            boxShadow: '0 10px 28px rgba(91, 147, 255, 0.38)',
-          }}
-          onClick={onClose}
-        >
-          Weiter — stark! 🎊
-        </button>
-      </div>
-    </div>
+function NotgroschenFullOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <CelebrationCard
+      open={open}
+      onClose={onClose}
+      zIndex={5001}
+      title="Notgroschen am Ziel"
+      body="Dein Polster entspricht jetzt deinem Zielbetrag. Damit bist du für unerwartete Ausgaben besser abgesichert."
+      actionLabel="Verstanden"
+    />
   );
 }
 
 function PortfolioPowerMilestoneOverlay({
   open,
-  seed,
   milestone,
   onClose,
 }: {
   open: boolean;
-  seed: number;
   milestone: PortfolioPowerMilestone;
   onClose: () => void;
 }) {
   const meta = milestoneCelebrationMeta(milestone);
-  const mega = meta.tier === 'mega';
-  const piecesPrimary = useMemo(() => buildConfettiPieces(seed, meta.confetti), [seed, meta.confetti]);
-  const piecesExtra = useMemo(
-    () => (mega ? buildConfettiPieces(seed + 413, Math.floor(meta.confetti * 0.55)) : []),
-    [seed, mega, meta.confetti],
-  );
-
-  const panel = (() => {
-    switch (meta.tier) {
-      case 'violet':
-        return {
-          backdrop: 'rgba(0,0,0,0.78)',
-          bg: 'linear-gradient(165deg, #1a1028 0%, #0c0c12 48%, #140a22 100%)',
-          border: '1px solid rgba(168, 85, 247, 0.52)',
-          shadow: '0 24px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(168,85,247,0.14), inset 0 1px 0 rgba(255,255,255,0.06)',
-          titleGrad: 'linear-gradient(90deg, #a855f7, #c4b5fd, #5b93ff)',
-          btn: 'linear-gradient(90deg, #a855f7, #c4b5fd)',
-          btnShadow: '0 10px 28px rgba(168, 85, 247, 0.35)',
-        };
-      case 'gold':
-        return {
-          backdrop: 'rgba(0,0,0,0.78)',
-          bg: 'linear-gradient(165deg, #1f1a08 0%, #0c0c10 48%, #121008 100%)',
-          border: '1px solid rgba(248, 208, 58, 0.55)',
-          shadow: '0 24px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(248,208,58,0.15), inset 0 1px 0 rgba(255,255,255,0.06)',
-          titleGrad: 'linear-gradient(90deg, #f8d03a, #fff8dc, #f0883e)',
-          btn: 'linear-gradient(90deg, #f8d03a, #f7e08a)',
-          btnShadow: '0 10px 28px rgba(248, 208, 58, 0.35)',
-        };
-      case 'cyan':
-        return {
-          backdrop: 'rgba(0,0,0,0.78)',
-          bg: 'linear-gradient(165deg, #082018 0%, #0c1014 48%, #0a1820 100%)',
-          border: '1px solid rgba(0, 212, 170, 0.48)',
-          shadow: '0 24px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(0,212,170,0.12)',
-          titleGrad: 'linear-gradient(90deg, #00d4aa, #5bffb8, #93c5fd)',
-          btn: 'linear-gradient(90deg, #00d4aa, #5eead4)',
-          btnShadow: '0 10px 28px rgba(0, 212, 170, 0.32)',
-        };
-      case 'purple':
-        return {
-          backdrop: 'rgba(0,0,0,0.79)',
-          bg: 'linear-gradient(165deg, #241030 0%, #0e0a14 52%, #12081c 100%)',
-          border: '1px solid rgba(167, 139, 250, 0.5)',
-          shadow: '0 24px 80px rgba(0,0,0,0.68), 0 0 0 1px rgba(167,139,250,0.14)',
-          titleGrad: 'linear-gradient(90deg, #c4b5fd, #a855f7, #7c3aed)',
-          btn: 'linear-gradient(90deg, #9333ea, #c4b5fd)',
-          btnShadow: '0 10px 28px rgba(124, 58, 237, 0.4)',
-        };
-      case 'electric':
-        return {
-          backdrop: 'rgba(0,0,0,0.8)',
-          bg: 'linear-gradient(165deg, #101828 0%, #0c0c12 50%, #0a1424 100%)',
-          border: '1px solid rgba(147, 197, 253, 0.55)',
-          shadow: '0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(96,165,250,0.2)',
-          titleGrad: 'linear-gradient(90deg, #fde047, #93c5fd, #ffffff)',
-          btn: 'linear-gradient(90deg, #3b82f6, #93c5fd)',
-          btnShadow: '0 10px 30px rgba(59, 130, 246, 0.45)',
-        };
-      case 'blue':
-        return {
-          backdrop: 'rgba(0,0,0,0.8)',
-          bg: 'linear-gradient(165deg, #081a28 0%, #0c0c10 48%, #0a1828 100%)',
-          border: '1px solid rgba(125, 211, 252, 0.5)',
-          shadow: '0 24px 80px rgba(0,0,0,0.7), 0 0 24px rgba(56,189,248,0.18)',
-          titleGrad: 'linear-gradient(90deg, #7dd3fc, #a5f3fc, #c4b5fd)',
-          btn: 'linear-gradient(90deg, #0284c7, #38bdf8)',
-          btnShadow: '0 10px 30px rgba(14, 165, 233, 0.4)',
-        };
-      case 'nova':
-        return {
-          backdrop: 'rgba(5,8,22,0.88)',
-          bg: 'linear-gradient(165deg, #1e1b4b 0%, #0f0f18 52%, #0c1040 100%)',
-          border: '1px solid rgba(88, 166, 255, 0.6)',
-          shadow: '0 28px 90px rgba(0,0,0,0.75), 0 0 40px rgba(88,166,255,0.28)',
-          titleGrad: 'linear-gradient(90deg, #f8d03a, #58a6ff, #ffffff)',
-          btn: 'linear-gradient(90deg, #58a6ff, #93c5fd)',
-          btnShadow: '0 12px 36px rgba(88, 166, 255, 0.5)',
-        };
-      case 'mega':
-        return {
-          backdrop: 'rgba(0,0,0,0.9)',
-          bg: 'linear-gradient(165deg, #3d2508 0%, #141008 42%, #0a0a06 72%, #1a3010 100%)',
-          border: '2px solid rgba(248, 208, 58, 0.75)',
-          shadow:
-            '0 32px 100px rgba(0,0,0,0.85), 0 0 60px rgba(248,208,58,0.35), inset 0 2px 0 rgba(255,255,240,0.12)',
-          titleGrad: 'linear-gradient(90deg, #ffec82, #f8d03a, #fffef0, #f8d03a)',
-          btn: 'linear-gradient(90deg, #f8d03a, #eab308 45%, #ffec82)',
-          btnShadow: '0 14px 40px rgba(248, 208, 58, 0.55)',
-        };
-      default: {
-        const _e: never = meta.tier;
-        return _e;
-      }
-    }
-  })();
-
-  const renderPieces = (list: ConfettiPiece[], prefix: string) =>
-    list.map((p, i) => (
-      <div
-        key={`${prefix}-${i}`}
-        style={
-          {
-            position: 'absolute',
-            left: `${p.left}%`,
-            top: '-4%',
-            width: p.w,
-            height: p.h,
-            borderRadius: 2,
-            background: p.hue,
-            boxShadow: mega ? '0 0 10px rgba(255,236,170,0.45)' : '0 0 6px rgba(0,0,0,0.25)',
-            animation: `awPfMsConfettiFall ${p.duration}s cubic-bezier(0.22, 0.61, 0.36, 1) forwards`,
-            animationDelay: `${p.delay}s`,
-            ['--drift' as string]: `${p.drift}px`,
-            ['--rot' as string]: `${p.rot}deg`,
-          } as CSSProperties
-        }
-      />
-    ));
-
-  if (!open) return null;
-
   return (
-    <div
-      role="presentation"
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 5002,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
-        background: panel.backdrop,
-        WebkitBackdropFilter: 'blur(10px)',
-        backdropFilter: 'blur(10px)',
-      }}
-    >
-      <style>{`
-        @keyframes awPfMsPop {
-          0% { transform: scale(0.88) translateY(12px); opacity: 0; }
-          70% { transform: scale(1.02) translateY(0); opacity: 1; }
-          100% { transform: scale(1) translateY(0); opacity: 1; }
-        }
-        @keyframes awPfMsConfettiFall {
-          0% { transform: translate3d(0, -12px, 0) rotate(0deg); opacity: 1; }
-          100% { transform: translate3d(var(--drift), 88vh, 0) rotate(var(--rot)); opacity: 0.92; }
-        }
-        @keyframes awPfMsMegaPulse {
-          0%, 100% { box-shadow: 0 32px 100px rgba(0,0,0,0.85), 0 0 55px rgba(248,208,58,0.32); }
-          50% { box-shadow: 0 36px 110px rgba(0,0,0,0.88), 0 0 90px rgba(248,208,58,0.55); }
-        }
-      `}</style>
-
-      <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' as const }}>
-        {renderPieces(piecesPrimary, 'a')}
-        {renderPieces(piecesExtra, 'b')}
-      </div>
-
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="portfolio-milestone-title"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          position: 'relative',
-          maxWidth: mega ? 440 : 400,
-          width: '100%',
-          borderRadius: mega ? 22 : 20,
-          padding: mega ? '32px 24px 24px' : '28px 22px 22px',
-          textAlign: 'center' as const,
-          background: panel.bg,
-          border: panel.border,
-          boxShadow: panel.shadow,
-          animation: mega ? 'awPfMsPop 0.55s ease-out forwards, awPfMsMegaPulse 2.8s ease-in-out infinite 0.65s' : 'awPfMsPop 0.55s ease-out forwards',
-        }}
-      >
-        <div style={{ fontSize: mega ? 62 : 54, lineHeight: 1, marginBottom: mega ? 10 : 8 }}>{meta.heroEmoji}</div>
-        <div
-          id="portfolio-milestone-title"
-          style={{
-            fontSize: mega ? (meta.headline.length > 42 ? 18 : 20) : milestone >= 100_000 ? 20 : 21,
-            fontWeight: 900,
-            letterSpacing: mega ? -0.2 : -0.45,
-            lineHeight: 1.18,
-            textTransform: mega ? ('uppercase' as const) : undefined,
-            background: panel.titleGrad,
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          }}
-        >
-          {meta.headline}
-        </div>
-        <div style={{ fontSize: 15, fontWeight: 800, color: '#e6edf3', marginTop: 12, lineHeight: 1.45 }}>
-          Herzlichen Glückwunsch!
-        </div>
-        <div style={{ fontSize: mega ? 14 : 13, color: mega ? '#b8c5d9' : '#8b949e', marginTop: 8, lineHeight: mega ? 1.6 : 1.55 }}>{meta.sub}</div>
-        <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: mega ? 34 : 30 }}>🎉</span>
-          <span style={{ fontSize: mega ? 34 : 30 }}>✨</span>
-          <span style={{ fontSize: mega ? 34 : 30 }}>{mega ? '🍾' : '🎊'}</span>
-          {mega ? <span style={{ fontSize: 34 }}>💥</span> : null}
-        </div>
-        <button
-          type="button"
-          style={{
-            marginTop: 22,
-            width: '100%',
-            padding: mega ? '16px 20px' : '14px 18px',
-            borderRadius: 12,
-            border: mega ? '1px solid rgba(250,235,170,0.35)' : 'none',
-            fontWeight: 900,
-            fontSize: mega ? 15 : 15,
-            cursor: 'pointer',
-            color: mega ? '#0d1117' : '#0d1117',
-            background: panel.btn,
-            boxShadow: panel.btnShadow,
-          }}
-          onClick={onClose}
-        >
-          {meta.btn}
-        </button>
-      </div>
-    </div>
+    <CelebrationCard
+      open={open}
+      onClose={onClose}
+      zIndex={5002}
+      title={meta.headline}
+      body={meta.sub}
+      actionLabel={meta.btn}
+    />
   );
 }
 
@@ -1822,13 +1428,10 @@ export default function AllWin() {
   const [appleReady, setAppleReady] = useState(false);
   const [appleLoading, setAppleLoading] = useState(false);
   const [debtVictoryOpen, setDebtVictoryOpen] = useState(false);
-  const [debtVictorySeed, setDebtVictorySeed] = useState(0);
   const prevAllDebtsPaidRef = useRef(false);
   const [notgroschenVictoryOpen, setNotgroschenVictoryOpen] = useState(false);
-  const [notgroschenVictorySeed, setNotgroschenVictorySeed] = useState(0);
   const prevNotgroschenGoalMetRef = useRef<boolean | null>(null);
   const [portfolioMilestoneOpen, setPortfolioMilestoneOpen] = useState(false);
-  const [portfolioMilestoneSeed, setPortfolioMilestoneSeed] = useState(0);
   const [portfolioMilestoneKind, setPortfolioMilestoneKind] = useState<PortfolioPowerMilestone>(8000);
   const prevPortfolioPowerForMilestoneRef = useRef<number | null>(null);
   const [moneyTxListExpanded, setMoneyTxListExpanded] = useState(true);
@@ -2042,7 +1645,6 @@ export default function AllWin() {
   useEffect(() => {
     const allPaid = debts.length > 0 && debts.every((d) => d.remaining <= 0);
     if (allPaid && !prevAllDebtsPaidRef.current) {
-      setDebtVictorySeed(Date.now());
       setDebtVictoryOpen(true);
     }
     prevAllDebtsPaidRef.current = allPaid;
@@ -2072,7 +1674,6 @@ export default function AllWin() {
       return;
     }
     if (met && !prevNotgroschenGoalMetRef.current) {
-      setNotgroschenVictorySeed(Date.now());
       setNotgroschenVictoryOpen(true);
     }
     prevNotgroschenGoalMetRef.current = met;
@@ -2088,7 +1689,6 @@ export default function AllWin() {
     const crossed = highestPortfolioMilestoneCrossed(prev, p);
     if (crossed !== null) {
       setPortfolioMilestoneKind(crossed);
-      setPortfolioMilestoneSeed(Date.now());
       setPortfolioMilestoneOpen(true);
     }
     prevPortfolioPowerForMilestoneRef.current = p;
@@ -2728,7 +2328,7 @@ export default function AllWin() {
           change: +(m.change + (Math.random() - 0.5) * 0.2).toFixed(2),
         })),
       );
-    }, 3000);
+    }, 30_000);
     return () => clearInterval(id);
   }, []);
 
@@ -4043,7 +3643,6 @@ export default function AllWin() {
       width: '100%',
       marginTop: 8,
       boxShadow: '0 8px 18px rgba(37, 99, 235, 0.22)',
-      transition: 'transform 0.15s ease, box-shadow 0.2s ease, filter 0.2s ease',
     }),
     chip: (active: boolean) => ({
       padding: '8px 13px',
@@ -4055,7 +3654,6 @@ export default function AllWin() {
       background: active ? '#2563eb2e' : awBg.chipOff,
       color: active ? '#93c5fd' : '#d0d7de',
       boxShadow: active ? '0 0 0 1px #2563eb55 inset, 0 6px 14px rgba(37, 99, 235, 0.18)' : '0 2px 8px rgba(0,0,0,0.25)',
-      transition: 'all 0.2s ease',
     }),
     debtCard: { background: awBg.card, borderRadius: 14, padding: 16, marginBottom: 10, border: `1px solid ${awBg.cardBorder}` },
     txRow: { display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${awBg.cardBorder}` },
@@ -4067,7 +3665,7 @@ export default function AllWin() {
       transform: 'translateX(-50%)',
       width: 'calc(100% - 24px)',
       maxWidth: 400,
-      background: type === 'level' ? 'linear-gradient(135deg,#7c3aed,#a855f7)' : type === 'error' ? '#cf222e' : '#2563eb',
+      background: type === 'level' ? '#1f6feb' : type === 'error' ? '#cf222e' : '#2563eb',
       color: type === 'level' ? '#fff' : type === 'error' ? '#fff' : '#f0f7ff',
       padding: '12px 16px',
       borderRadius: type === 'error' ? 14 : 99,
@@ -4109,7 +3707,6 @@ export default function AllWin() {
       border: 'none',
       borderRadius: 999,
       margin: '0 2px',
-      transition: 'all 0.2s ease',
     }),
     tabIcon: { fontSize: 20, display: 'block', marginBottom: 2 },
   };
@@ -4982,7 +4579,8 @@ export default function AllWin() {
               const b = portfolioPowerBadgeFor(portfolioTotalPower);
               return b ? (
                 <div style={{ fontSize: b.fontSize, fontWeight: b.fontWeight, color: b.color, marginTop: 4 }}>
-                  {b.emoji} {b.text}
+                  {b.emoji ? `${b.emoji} ` : ''}
+                  {b.text}
                 </div>
               ) : null;
             })()}
@@ -6445,7 +6043,8 @@ export default function AllWin() {
               const b = portfolioPowerBadgeFor(portfolioTotalPower);
               return b ? (
                 <div style={{ fontSize: b.fontSize, fontWeight: b.fontWeight, color: b.color, marginTop: 4 }}>
-                  {b.emoji} {b.text}
+                  {b.emoji ? `${b.emoji} ` : ''}
+                  {b.text}
                 </div>
               ) : null;
             })()}
@@ -7261,16 +6860,11 @@ export default function AllWin() {
 
       {toast && <div style={S.toast(toast.type)}>{toast.msg}</div>}
 
-      <DebtZeroVictoryOverlay open={debtVictoryOpen} seed={debtVictorySeed} onClose={() => setDebtVictoryOpen(false)} />
-      <NotgroschenFullOverlay
-        open={notgroschenVictoryOpen}
-        seed={notgroschenVictorySeed}
-        onClose={() => setNotgroschenVictoryOpen(false)}
-      />
+      <DebtZeroVictoryOverlay open={debtVictoryOpen} onClose={() => setDebtVictoryOpen(false)} />
+      <NotgroschenFullOverlay open={notgroschenVictoryOpen} onClose={() => setNotgroschenVictoryOpen(false)} />
       <AppGuideTour open={appTourOpen} steps={appTourSteps} onClose={closeAppTour} onTabChange={setTab} />
       <PortfolioPowerMilestoneOverlay
         open={portfolioMilestoneOpen}
-        seed={portfolioMilestoneSeed}
         milestone={portfolioMilestoneKind}
         onClose={() => setPortfolioMilestoneOpen(false)}
       />
