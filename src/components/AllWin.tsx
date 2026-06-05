@@ -24,7 +24,8 @@ import HomeChartsSection from './homeCharts/HomeChartsSection';
 import { MAX_DAILY_VERMOGEN_SNAPSHOTS, normalizeDailyVermogenSnapshots, inferChartTimelineEndMs, type DailyVermogenSnapshot } from './homeCharts/homeChartData';
 import { allwinPalette as awBg } from '../theme/allwinPalette';
 import { marketHistoryRange, sparkPricesFromHistory, type MarketDailyPrice } from '../marketHistory';
-import { fetchMarketHistory, fetchMarketQuotes, type MarketInstrumentKind } from '../marketApi';
+import { fetchInstrumentResolve, fetchMarketHistory, fetchMarketQuotes, type MarketInstrumentKind } from '../marketApi';
+import { instrumentDisplayLines, isIsinCode, normalizeIsin } from '../instrumentDisplay';
 import { getOverviewDemoSnapshot, OVERVIEW_DEMO_HINT } from '../demo/overviewDemoSample';
 import {
   PORTFOLIO_POWER_MILESTONE_EURS,
@@ -784,6 +785,9 @@ type WatchlistExtraPersist = {
   sym: string;
   name: string;
   kind: 'stock' | 'crypto';
+  /** Ursprüngliche ISIN, wenn per OpenFIGI auf Börsen-Kürzel gemappt. */
+  isin?: string;
+  logoUrl?: string;
   /** Nur Live-Watchlist — kein Eintrag unter Portfolio Power / Order. */
   watchlistOnly?: boolean;
 };
@@ -843,7 +847,16 @@ function normalizeWatchlistExtrasPersist(raw: unknown): WatchlistExtraPersist[] 
     const kind = r.kind === 'crypto' ? 'crypto' : 'stock';
     const watchlistOnly = r.watchlistOnly === true ? true : undefined;
     seen.add(sym);
-    out.push({ sym, name: nameRaw || sym, kind, ...(watchlistOnly ? { watchlistOnly: true } : {}) });
+    const isinRaw = typeof r.isin === 'string' ? normalizeIsin(r.isin) : '';
+    const logoUrl = typeof r.logoUrl === 'string' && r.logoUrl.trim() ? r.logoUrl.trim() : undefined;
+    out.push({
+      sym,
+      name: nameRaw || sym,
+      kind,
+      ...(isinRaw ? { isin: isinRaw } : {}),
+      ...(logoUrl ? { logoUrl } : {}),
+      ...(watchlistOnly ? { watchlistOnly: true } : {}),
+    });
   }
   return out.slice(0, 40);
 }
@@ -854,15 +867,30 @@ function fmpStockLogoUrl(sym: string): string {
 }
 
 function buildMarketItemFromExtra(extra: WatchlistExtraPersist): MarketItem {
-  const sym = sanitizeWatchlistSymbol(extra.sym)!;
+  const sym = sanitizeWatchlistSymbol(extra.sym) || extra.sym.trim().toUpperCase();
   const name =
     typeof extra.name === 'string' && extra.name.trim() ? extra.name.trim().slice(0, 56) : sym;
   const kind = extra.kind === 'crypto' ? 'crypto' : 'stock';
-  const slugLower = sym.toLowerCase().replace(/\./g, '');
+  const slugLower = sym.split('.')[0].toLowerCase().replace(/\./g, '');
   const logoUrl =
-    kind === 'crypto' ? `${CRYPTOCURRENCY_ICONS_RAW}/${slugLower}.png` : fmpStockLogoUrl(sym);
+    extra.logoUrl ||
+    (kind === 'crypto' ? `${CRYPTOCURRENCY_ICONS_RAW}/${slugLower}.png` : fmpStockLogoUrl(sym));
   const icon = kind === 'crypto' ? '◆' : '◈';
   return { sym, name, price: 0, change: 0, kind, icon, logoUrl };
+}
+
+function instrumentMetaForSym(
+  sym: string,
+  market: MarketItem[],
+  extras: WatchlistExtraPersist[],
+): { sym: string; name: string; isin?: string } {
+  const m = market.find((x) => x.sym === sym);
+  const ex = extras.find((e) => e.sym === sym);
+  return {
+    sym,
+    name: m?.name || ex?.name || sym,
+    isin: ex?.isin,
+  };
 }
 
 function marketKindForItem(sym: string, extras: WatchlistExtraPersist[]): MarketInstrumentKind {
@@ -1464,6 +1492,7 @@ export default function AllWin() {
   const [wlAddSym, setWlAddSym] = useState('');
   const [wlAddName, setWlAddName] = useState('');
   const [wlAddKind, setWlAddKind] = useState<'stock' | 'crypto'>('stock');
+  const [wlAddLoading, setWlAddLoading] = useState(false);
   /** Mini-Formular: neben „Live“ in Live Marktdaten */
   const [liveMarketAddOpen, setLiveMarketAddOpen] = useState(false);
   /** Mini-Formular: aus Order-Dropdown „Neue Aktie / Krypto“ */
@@ -2497,6 +2526,31 @@ export default function AllWin() {
     return () => clearInterval(id);
   }, [isPaidPlan, marketInstrumentsKey, refreshMarketQuotes]);
 
+  const isinMigrateRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!BILLING_API) return;
+    const pending = watchlistExtras.filter((e) => isIsinCode(e.sym) && !isinMigrateRef.current.has(e.sym));
+    if (!pending.length) return;
+    void (async () => {
+      for (const ex of pending) {
+        isinMigrateRef.current.add(ex.sym);
+        try {
+          const r = await fetchInstrumentResolve(BILLING_API, ex.sym, ex.kind, ex.name);
+          renameInstrumentSym(ex.sym, {
+            sym: r.sym,
+            name: ex.name && !isIsinCode(ex.name) ? ex.name : r.name,
+            kind: r.kind,
+            isin: r.isin || normalizeIsin(ex.sym),
+            logoUrl: r.logoUrl,
+          });
+        } catch {
+          /* ISIN bleibt bis manuell korrigiert */
+        }
+      }
+      void refreshMarketQuotes();
+    })();
+  }, [watchlistExtras, BILLING_API, refreshMarketQuotes]);
+
   useEffect(() => {
     if (tradableMarket.length === 0) return;
     if (!tradableMarket.some((m) => m.sym === tradeSym)) {
@@ -2535,16 +2589,12 @@ export default function AllWin() {
     }
   }, [authUser, earnedOrdenPresetIds]);
 
-  const addWatchlistInstrument = (opts?: { watchlistOnly?: boolean }) => {
-    const watchlistOnly = opts?.watchlistOnly === true;
-    const sym = sanitizeWatchlistSymbol(wlAddSym);
-    if (!sym) {
-      showToast(
-        'Bitte Börsen-Kürzel eingeben (z. B. AAPL, SAP, BTC) — keine ISIN. Max. 12 Zeichen.',
-        'error',
-      );
-      return;
-    }
+  const applyResolvedInstrument = (
+    resolved: { sym: string; name: string; kind: 'stock' | 'crypto'; isin?: string; logoUrl?: string },
+    watchlistOnly: boolean,
+    toastLabel?: string,
+  ) => {
+    const sym = sanitizeWatchlistSymbol(resolved.sym) || resolved.sym.toUpperCase();
     if (BASE_SYM_SET.has(sym)) {
       showToast(`${sym} ist bereits Teil der Standard-Watchlist.`, 'error');
       return;
@@ -2557,10 +2607,17 @@ export default function AllWin() {
       showToast('Maximal 40 eigene Instrumente.', 'error');
       return;
     }
-    const name = wlAddName.trim().slice(0, 56) || sym;
-    const kind = wlAddKind === 'crypto' ? 'crypto' : 'stock';
-    const item = buildMarketItemFromExtra({ sym, name, kind });
-    const extra: WatchlistExtraPersist = watchlistOnly ? { sym, name, kind, watchlistOnly: true } : { sym, name, kind };
+    const name = resolved.name.trim().slice(0, 56) || sym;
+    const kind = resolved.kind;
+    const extra: WatchlistExtraPersist = {
+      sym,
+      name,
+      kind,
+      ...(resolved.isin ? { isin: resolved.isin } : {}),
+      ...(resolved.logoUrl ? { logoUrl: resolved.logoUrl } : {}),
+      ...(watchlistOnly ? { watchlistOnly: true } : {}),
+    };
+    const item = buildMarketItemFromExtra(extra);
     setWatchlistExtras((prev) => [...prev, extra]);
     setMarket((prev) => [...prev, item]);
     if (!watchlistOnly) {
@@ -2570,11 +2627,119 @@ export default function AllWin() {
     setWlAddName('');
     setLiveMarketAddOpen(false);
     setOrderInstrumentAddOpen(false);
+    const label = toastLabel || name;
     showToast(
       watchlistOnly
-        ? `${sym} nur in Live Marktdaten — nicht im Portfolio Power ✅`
-        : `${sym} zur Watchlist & Portfolio-Power-Handel hinzugefügt ✅`,
+        ? `${label} (${sym}) nur in Live Marktdaten ✅`
+        : `${label} (${sym}) zur Watchlist hinzugefügt ✅`,
     );
+  };
+
+  const renameInstrumentSym = (oldSym: string, resolved: { sym: string; name: string; kind: 'stock' | 'crypto'; isin?: string; logoUrl?: string }) => {
+    const newSym = sanitizeWatchlistSymbol(resolved.sym) || resolved.sym.toUpperCase();
+    if (oldSym === newSym) {
+      setWatchlistExtras((prev) =>
+        prev.map((x) =>
+          x.sym === oldSym
+            ? {
+                ...x,
+                name: resolved.name,
+                kind: resolved.kind,
+                ...(resolved.isin ? { isin: resolved.isin } : {}),
+                ...(resolved.logoUrl ? { logoUrl: resolved.logoUrl } : {}),
+              }
+            : x,
+        ),
+      );
+      setMarket((prev) =>
+        prev.map((m) =>
+          m.sym === oldSym
+            ? buildMarketItemFromExtra({
+                sym: newSym,
+                name: resolved.name,
+                kind: resolved.kind,
+                isin: resolved.isin,
+                logoUrl: resolved.logoUrl,
+              })
+            : m,
+        ),
+      );
+      return;
+    }
+    setWatchlistExtras((prev) =>
+      prev
+        .filter((x) => x.sym !== oldSym)
+        .concat({
+          sym: newSym,
+          name: resolved.name,
+          kind: resolved.kind,
+          ...(resolved.isin ? { isin: resolved.isin } : {}),
+          ...(resolved.logoUrl ? { logoUrl: resolved.logoUrl } : {}),
+          ...(prev.find((x) => x.sym === oldSym)?.watchlistOnly ? { watchlistOnly: true } : {}),
+        }),
+    );
+    setMarket((prev) => {
+      const old = prev.find((m) => m.sym === oldSym);
+      const extra: WatchlistExtraPersist = {
+        sym: newSym,
+        name: resolved.name,
+        kind: resolved.kind,
+        isin: resolved.isin,
+        logoUrl: resolved.logoUrl,
+      };
+      const item = { ...buildMarketItemFromExtra(extra), price: old?.price ?? 0, change: old?.change ?? 0, historyDaily: old?.historyDaily };
+      return prev.filter((m) => m.sym !== oldSym).concat(item);
+    });
+    setPortfolioShares((prev) => {
+      const sh = prev[oldSym];
+      if (sh == null) return prev;
+      const next = { ...prev };
+      delete next[oldSym];
+      next[newSym] = sh;
+      return next;
+    });
+    setPortfolioTrades((prev) => prev.map((t) => (t.sym === oldSym ? { ...t, sym: newSym } : t)));
+    if (tradeSym === oldSym) setTradeSym(newSym);
+    if (marketDetailSym === oldSym) setMarketDetailSym(newSym);
+  };
+
+  const addWatchlistInstrument = async (opts?: { watchlistOnly?: boolean }) => {
+    const watchlistOnly = opts?.watchlistOnly === true;
+    const raw = wlAddSym.trim();
+    if (!raw) {
+      showToast('Bitte Börsen-Kürzel oder ISIN eingeben.', 'error');
+      return;
+    }
+    const kind = wlAddKind === 'crypto' ? 'crypto' : 'stock';
+    setWlAddLoading(true);
+    try {
+      let resolved: { sym: string; name: string; kind: 'stock' | 'crypto'; isin?: string; logoUrl?: string };
+      if (BILLING_API) {
+        const r = await fetchInstrumentResolve(BILLING_API, raw, kind, wlAddName.trim());
+        resolved = {
+          sym: r.sym,
+          name: wlAddName.trim() || r.name,
+          kind: r.kind,
+          isin: r.isin,
+          logoUrl: r.logoUrl,
+        };
+      } else if (isIsinCode(raw)) {
+        showToast('ISIN-Auflösung braucht den Billing-Server (Railway).', 'error');
+        return;
+      } else {
+        const sym = sanitizeWatchlistSymbol(raw);
+        if (!sym) {
+          showToast('Ungültiges Börsen-Kürzel — z. B. AAPL, SAP.DE, BTC.', 'error');
+          return;
+        }
+        resolved = { sym, name: wlAddName.trim() || sym, kind };
+      }
+      applyResolvedInstrument(resolved, watchlistOnly);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Instrument konnte nicht hinzugefügt werden.', 'error');
+    } finally {
+      setWlAddLoading(false);
+    }
   };
 
   const removeWatchlistInstrument = (symRaw: string) => {
@@ -3903,26 +4068,25 @@ export default function AllWin() {
         {opts?.watchlistOnly ? (
           <>
             Nur Beobachtung unter <strong style={{ color: '#c9d1d9' }}>Live Marktdaten</strong> — Live-Kurs vom Server, kein Eintrag unter
-            Portfolio Power / Order. <strong style={{ color: '#c9d1d9' }}>Börsen-Kürzel</strong> eintragen (z. B. AAPL, SAP), nicht die
-            ISIN.
+            Portfolio Power / Order. <strong style={{ color: '#c9d1d9' }}>Börsen-Kürzel oder ISIN</strong> — ISIN wird automatisch
+            zum Kürzel + Namen aufgelöst.
           </>
         ) : (
           <>
-            <strong style={{ color: '#c9d1d9' }}>Börsen-Kürzel</strong> + Art wählen — das kurze Symbol von Börse/Depot (z. B.{' '}
-            <strong style={{ color: '#c9d1d9' }}>AAPL</strong> für Apple, <strong style={{ color: '#c9d1d9' }}>SAP</strong>,{' '}
-            <strong style={{ color: '#c9d1d9' }}>BTC</strong> für Bitcoin). <strong style={{ color: '#c9d1d9' }}>Keine ISIN</strong>{' '}
-            (die lange Nummer auf dem Depotauszug). Erscheint danach in der Order-Liste.
+            <strong style={{ color: '#c9d1d9' }}>Börsen-Kürzel oder ISIN</strong> + Art wählen (z. B.{' '}
+            <strong style={{ color: '#c9d1d9' }}>AAPL</strong>, <strong style={{ color: '#c9d1d9' }}>SAP.DE</strong>, oder ISIN vom
+            Depotauszug). ISIN wird automatisch zum Kürzel und Anzeigenamen aufgelöst.
           </>
         )}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 8, alignItems: 'flex-end' }}>
         <div style={{ flex: '1 1 90px', minWidth: 80 }}>
           <label style={{ fontSize: 10, color: '#8b949e', fontWeight: 600, display: 'block', marginBottom: 4 }}>
-            Börsen-Kürzel
+            Börsen-Kürzel oder ISIN
           </label>
           <input
             style={{ ...S.input, marginTop: 0 }}
-            placeholder="z. B. AAPL, SAP, BTC"
+            placeholder="z. B. AAPL, SAP.DE oder ISIN"
             autoCapitalize="characters"
             value={wlAddSym}
             onChange={(e) => setWlAddSym(e.target.value)}
@@ -3951,10 +4115,11 @@ export default function AllWin() {
       <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' as const }}>
         <button
           type="button"
-          style={{ ...S.btn('#2563eb'), marginTop: 0 }}
-          onClick={() => addWatchlistInstrument({ watchlistOnly: opts?.watchlistOnly === true })}
+          style={{ ...S.btn('#2563eb'), marginTop: 0, opacity: wlAddLoading ? 0.7 : 1 }}
+          disabled={wlAddLoading}
+          onClick={() => void addWatchlistInstrument({ watchlistOnly: opts?.watchlistOnly === true })}
         >
-          Hinzufügen
+          {wlAddLoading ? 'Wird aufgelöst…' : 'Hinzufügen'}
         </button>
         <button type="button" style={{ ...S.chip(false), marginTop: 0 }} onClick={onCancel}>
           Abbrechen
@@ -3975,14 +4140,19 @@ export default function AllWin() {
         const w = portfolioAlloc[m.sym] ?? 0;
         const pct = w * 100;
         const logoSource = m;
+        const display = instrumentDisplayLines(instrumentMetaForSym(m.sym, market, watchlistExtras));
         return (
           <div key={m.sym} style={{ marginBottom: 10 }}>
             <div style={{ ...S.row, marginBottom: 4, gap: 8, alignItems: 'center' as const }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                <MarketAssetIcon item={logoSource} size={32} borderRadius={8} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                <MarketAssetIcon item={logoSource} size={40} borderRadius={10} />
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{m.sym}</div>
-                  <div style={{ fontSize: 10, color: '#7d8590', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: '#e6edf3' }}>{display.title}</div>
+                  {display.subtitle ? (
+                    <div style={{ fontSize: 10, color: '#7d8590', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {display.subtitle}
+                    </div>
+                  ) : null}
                   <div style={{ fontSize: 10, color: '#8b949e', marginTop: 2 }}>
                     Kurs <strong style={{ color: '#c9d1d9' }}>{fmt(m.price)}</strong>/Stk ·{' '}
                     <span style={{ color: m.change >= 0 ? '#2563eb' : '#ff7b7b', fontWeight: 600 }}>
@@ -4116,19 +4286,23 @@ export default function AllWin() {
                   setTradeSym(v);
                 }}
               >
-                {tradableMarket.map((m) => (
-                  <option key={m.sym} value={m.sym}>
-                    {m.sym} — {m.name}
-                  </option>
-                ))}
+                {tradableMarket.map((m) => {
+                  const display = instrumentDisplayLines(instrumentMetaForSym(m.sym, market, watchlistExtras));
+                  return (
+                    <option key={m.sym} value={m.sym}>
+                      {display.title}
+                      {display.subtitle ? ` · ${display.subtitle}` : ''}
+                    </option>
+                  );
+                })}
                 <option value={ADD_INSTRUMENT_SELECT_VALUE} style={{ fontWeight: 700 }}>
                   + Neue Aktie / Krypto…
                 </option>
               </select>
             ) : (
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, lineHeight: 1.5 }}>
-                <strong style={{ color: '#c9d1d9' }}>Neues Instrument anlegen.</strong> Börsen-Kürzel eintragen (z. B. AAPL) — nicht
-                die ISIN. Danach wieder normal handeln; „Abbrechen“ = zurück zur Titelwahl.
+                <strong style={{ color: '#c9d1d9' }}>Neues Instrument anlegen.</strong> Börsen-Kürzel oder ISIN — wird automatisch
+                benannt. Danach wieder normal handeln; „Abbrechen“ = zurück zur Titelwahl.
               </div>
             )}
             {orderInstrumentAddOpen && !levelUpLocked && !liveMarketAddOpen ? (
@@ -6230,6 +6404,7 @@ export default function AllWin() {
       const expanded = marketDetailSym === m.sym;
       const range = marketHistoryRange(hist);
       const sparkData = sparkPricesFromHistory(m.historyDaily, m.price);
+      const display = instrumentDisplayLines(instrumentMetaForSym(m.sym, market, watchlistExtras));
       return (
         <div key={m.sym} style={{ borderBottom: `1px solid ${awBg.cardBorder}` }}>
           <div style={S.marketRow}>
@@ -6256,12 +6431,13 @@ export default function AllWin() {
                 textAlign: 'left',
               }}
             >
-              <MarketAssetIcon item={m} size={36} borderRadius={10} />
+              <MarketAssetIcon item={m} size={42} borderRadius={11} />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{m.sym}</div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: '#e6edf3' }}>{display.title}</div>
                 <div style={{ fontSize: 11, color: '#7d8590', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {m.name}
-                  {expanded ? ' · Verlauf ▲' : ' · Verlauf ▶'}
+                  {display.subtitle}
+                  {display.subtitle ? ' · ' : ''}
+                  {expanded ? 'Verlauf ▲' : 'Verlauf ▶'}
                 </div>
               </div>
               <div

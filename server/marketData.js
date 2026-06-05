@@ -216,6 +216,101 @@ async function fetchYahooHistory(sym, days) {
   return { history, currency: currency === 'USD' ? 'EUR' : currency, source };
 }
 
+function isIsinCode(raw) {
+  const s = String(raw || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s/g, '');
+  return /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(s);
+}
+
+function formatSecurityName(raw) {
+  if (!raw) return '';
+  const cleaned = String(raw)
+    .replace(/\s*-\s*registered\b.*$/i, '')
+    .replace(/\s+registered\b.*$/i, '')
+    .trim();
+  return cleaned
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : ''))
+    .join(' ')
+    .replace(/\bAg\b/g, 'AG')
+    .replace(/\bSe\b/g, 'SE')
+    .replace(/\bEtf\b/g, 'ETF')
+    .replace(/\bNv\b/g, 'NV')
+    .replace(/\bDe\b$/g, 'DE');
+}
+
+function yahooTickerFromFigi(row) {
+  const t = row?.ticker;
+  if (!t) return null;
+  const ex = row.exchCode;
+  if (['GR', 'GF', 'GD', 'GS', 'GB', 'GT'].includes(ex)) return `${t}.DE`;
+  if (ex === 'LN') return `${t}.L`;
+  if (ex === 'PA') return `${t}.PA`;
+  if (ex === 'AS') return `${t}.AS`;
+  if (ex === 'SW') return `${t}.SW`;
+  if (ex === 'IM') return `${t}.MI`;
+  return t;
+}
+
+function stockLogoUrl(sym) {
+  return `https://financialmodelingprep.com/image-stock/${String(sym).replace(/\./g, '-')}.png`;
+}
+
+const CRYPTOCURRENCY_ICONS_RAW =
+  'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color';
+
+async function resolveIsinToInstrument(isin, kindHint) {
+  const data = await fetchJson('https://api.openfigi.com/v3/mapping', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify([{ idType: 'ID_ISIN', idValue: isin }]),
+  });
+  const rows = data?.[0]?.data;
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const de = rows.find((r) => ['GR', 'GF', 'GD', 'GS', 'GB', 'GT'].includes(r.exchCode));
+  const us = rows.find((r) => r.exchCode === 'US' || r.micCode === 'XNAS' || r.micCode === 'XNYS');
+  const row = de || us || rows[0];
+  const sym = yahooTickerFromFigi(row);
+  if (!sym) return null;
+  const name = formatSecurityName(row.name || row.ticker || sym);
+  const kind = kindHint === 'crypto' ? 'crypto' : 'stock';
+  const logoUrl =
+    kind === 'crypto'
+      ? `${CRYPTOCURRENCY_ICONS_RAW}/${sym.split('.')[0].toLowerCase()}.png`
+      : stockLogoUrl(sym);
+  return { sym: sym.toUpperCase(), name, kind, isin, logoUrl, resolved: true };
+}
+
+function sanitizeSymbol(raw) {
+  const s = String(raw || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9.]/g, '');
+  if (!s || s.length > 16 || isIsinCode(s)) return null;
+  return s;
+}
+
+async function resolveInstrumentInput(input, kindHint, nameHint) {
+  const trimmed = String(input || '').trim();
+  const isin = isIsinCode(trimmed) ? trimmed.toUpperCase().replace(/\s/g, '') : null;
+  if (isin) {
+    const fromIsin = await resolveIsinToInstrument(isin, kindHint);
+    if (!fromIsin) throw new Error(`ISIN ${isin} nicht gefunden — Börsen-Kürzel manuell eingeben.`);
+    return fromIsin;
+  }
+  const sym = sanitizeSymbol(trimmed);
+  if (!sym) throw new Error('Bitte Börsen-Kürzel (z. B. AAPL, SAP.DE) oder gültige ISIN eingeben.');
+  const kind = kindHint === 'crypto' ? 'crypto' : 'stock';
+  const slug = sym.split('.')[0].toLowerCase();
+  const logoUrl =
+    kind === 'crypto' ? `${CRYPTOCURRENCY_ICONS_RAW}/${slug}.png` : stockLogoUrl(sym);
+  const name = String(nameHint || '').trim().slice(0, 56) || sym;
+  return { sym, name, kind, isin: undefined, logoUrl, resolved: false };
+}
+
 export function mountMarketRoutes(app) {
   app.post('/api/market/quotes', async (req, res) => {
     try {
@@ -253,6 +348,20 @@ export function mountMarketRoutes(app) {
     } catch (e) {
       console.error('[market] history:', e.message);
       return res.status(502).json({ error: 'Kursverlauf vorübergehend nicht verfügbar.' });
+    }
+  });
+
+  app.post('/api/market/resolve', async (req, res) => {
+    try {
+      const input = String(req.body?.input || req.body?.sym || '').trim();
+      if (!input) return res.status(400).json({ error: 'input erforderlich' });
+      const kind = req.body?.kind === 'crypto' ? 'crypto' : 'stock';
+      const nameHint = typeof req.body?.name === 'string' ? req.body.name : '';
+      const resolved = await resolveInstrumentInput(input, kind, nameHint);
+      return res.json(resolved);
+    } catch (e) {
+      console.error('[market] resolve:', e.message);
+      return res.status(400).json({ error: e.message || 'Instrument konnte nicht aufgelöst werden.' });
     }
   });
 }
