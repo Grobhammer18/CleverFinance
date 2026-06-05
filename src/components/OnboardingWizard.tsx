@@ -686,7 +686,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                 </>
               ) : (
                 <>
-                  Ohne Notgroschen bei laufendem Hauskredit überspringen wir die Investment-Fragen. LevelUp wird freigeschaltet, sobald dein Notgroschen mindestens 50 % des Ziels ({fmtEuro(notgroschenTargetFromIncome(netIncome))}) erreicht. Den Stand pflegst du unter Home (⋮ → „Stand bearbeiten“).
+                  Ohne Notgroschen überspringen wir die Investment-Fragen im Onboarding — <strong>LevelUp</strong> (Portfolio, Orders, Live-Kurse) bleibt für dich trotzdem nutzbar. Bitte baut parallel euren Notgroschen unter Home auf (⋮ → „Stand bearbeiten“, Ziel ca. {fmtEuro(notgroschenTargetFromIncome(netIncome))}).
                 </>
               )}
             </div>

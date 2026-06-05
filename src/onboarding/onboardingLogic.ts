@@ -69,19 +69,37 @@ function isLevelUpMode(m: unknown): m is LevelUpMode {
   return m === 'full' || m === 'until_all_debts' || m === 'until_emergency_half';
 }
 
-/** LevelUp-Modus nach Reload: v2/Server/Cache, sonst bei offenen Schulden konservativ sperren. */
+/** LevelUp-Modus nach Reload: v2/Server/Cache, sonst konservativ aus Schuld-Art ableiten. */
 export function resolveLevelUpMode(args: {
   fromV2?: LevelUpMode | null;
   fromServer?: LevelUpMode | null;
   fromCache?: LevelUpMode | null;
-  debts: { remaining: number }[];
+  debts: { remaining: number; kind?: string }[];
+  /** Für Migration: nur Hauskredit → kein LevelUp-Lock mehr. */
+  debtKinds?: { consumer: boolean; house: boolean };
 }): LevelUpMode {
-  const { fromV2, fromServer, fromCache, debts } = args;
-  if (isLevelUpMode(fromV2)) return fromV2;
-  if (isLevelUpMode(fromServer)) return fromServer;
-  if (isLevelUpMode(fromCache)) return fromCache;
-  if (debts.some((d) => d.remaining > 0)) return 'until_all_debts';
-  return 'full';
+  const { fromV2, fromServer, fromCache, debts, debtKinds } = args;
+  const houseOnlyOnboarding = Boolean(debtKinds?.house && !debtKinds?.consumer);
+
+  const normalizeLegacyMode = (mode: LevelUpMode): LevelUpMode => {
+    if (mode === 'until_emergency_half' && houseOnlyOnboarding) return 'full';
+    return mode;
+  };
+
+  if (isLevelUpMode(fromV2)) return normalizeLegacyMode(fromV2);
+  if (isLevelUpMode(fromServer)) return normalizeLegacyMode(fromServer);
+  if (isLevelUpMode(fromCache)) return normalizeLegacyMode(fromCache);
+
+  const open = debts.filter((d) => d.remaining > 0);
+  if (!open.length) return 'full';
+
+  const hasConsumerOpen = open.some((d) => d.kind !== 'house');
+  if (hasConsumerOpen) return 'until_all_debts';
+
+  const hasHouseOpen = open.some((d) => d.kind === 'house');
+  if (hasHouseOpen) return 'full';
+
+  return 'until_all_debts';
 }
 
 export function computeBranch(args: {
@@ -91,18 +109,25 @@ export function computeBranch(args: {
 }): { investSkipped: boolean; levelUpMode: LevelUpMode } {
   const { hasDebt, debtKinds, emergencyHas } = args;
   const hasConsumer = hasDebt && debtKinds.consumer;
-  const hasHouse = hasDebt && debtKinds.house;
+  const hasHouseOnly = hasDebt && debtKinds.house && !debtKinds.consumer;
 
   if (!hasDebt) {
     return { investSkipped: false, levelUpMode: 'full' };
   }
 
+  /** Konsum ohne Notgroschen: LevelUp gesperrt bis schuldenfrei. */
   if (hasConsumer && !emergencyHas) {
     return { investSkipped: true, levelUpMode: 'until_all_debts' };
   }
-  if (hasHouse && !emergencyHas) {
-    return { investSkipped: true, levelUpMode: 'until_emergency_half' };
+
+  /**
+   * Nur Hauskredit: LevelUp bleibt offen (Hypothek blockiert ETFs nicht).
+   * Ohne Notgroschen nur die Investment-Fragen im Wizard überspringen.
+   */
+  if (hasHouseOnly && !emergencyHas) {
+    return { investSkipped: true, levelUpMode: 'full' };
   }
+
   return { investSkipped: false, levelUpMode: 'full' };
 }
 

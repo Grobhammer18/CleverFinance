@@ -1711,6 +1711,17 @@ export default function AllWin() {
     }
   }, [authUser?.id, authUser?.email, authToken]);
 
+  /** Bestehende Nutzer: Hauskredit-only + alter Modus until_emergency_half → LevelUp frei. */
+  useEffect(() => {
+    if (!onboardingV2) return;
+    const resolved = resolveLevelUpMode({
+      fromV2: onboardingV2.levelUpMode,
+      debts,
+      debtKinds: onboardingV2.debtKinds,
+    });
+    setLevelUpMode((cur) => (cur === resolved ? cur : resolved));
+  }, [onboardingV2, debts]);
+
   const chartTimelineEndMs = useMemo(
     () => inferChartTimelineEndMs(transactions, portfolioTrades, dailyVermogenSnapshots),
     [transactions, portfolioTrades, dailyVermogenSnapshots],
@@ -2099,6 +2110,7 @@ export default function AllWin() {
           fromServer: serverMode as LevelUpMode | null,
           fromCache: cached?.levelUpMode,
           debts: debtsToApply,
+          debtKinds: v2?.debtKinds,
         });
         const done = resolveOnboardingDoneFromCloud(ob, authUser.id, authUser.email, state);
         const hasV2 = ob?.v2 != null && typeof ob.v2 === 'object';
@@ -4888,9 +4900,8 @@ export default function AllWin() {
   const tabsVisible = useMemo(
     () =>
       tabs
-        .filter((t) => !(levelUpLocked && t.id === 'invest'))
         .filter((t) => !(t.id === 'debts' && !hasOpenDebts)),
-    [levelUpLocked, hasOpenDebts],
+    [hasOpenDebts],
   );
 
   const appTourSteps = useMemo(
