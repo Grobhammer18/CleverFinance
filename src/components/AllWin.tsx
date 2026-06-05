@@ -871,6 +871,13 @@ function normalizeWatchlistExtrasPersist(raw: unknown): WatchlistExtraPersist[] 
   return out.slice(0, 40);
 }
 
+function instrumentNameNeedsRefresh(sym: string, name?: string): boolean {
+  const n = String(name || '').trim();
+  if (!n) return true;
+  if (n.toUpperCase() === sym.toUpperCase()) return true;
+  return /^[A-Z0-9]{1,6}(\.[A-Z]{1,3})?$/.test(n.toUpperCase());
+}
+
 function mergeLogoCandidates(primary: string | undefined, fallbacks: string[] | undefined, computed: string[]): string[] {
   const out: string[] = [];
   const add = (url: string | undefined) => {
@@ -2578,25 +2585,33 @@ export default function AllWin() {
     })();
   }, [watchlistExtras, BILLING_API, refreshMarketQuotes]);
 
-  const logoRefreshRef = useRef(new Set<string>());
+  const instrumentMetaRefreshRef = useRef(new Set<string>());
   useEffect(() => {
     if (!BILLING_API) return;
     const pending = watchlistExtras.filter(
-      (e) => !!e.isin && e.kind === 'stock' && !logoRefreshRef.current.has(e.sym),
+      (e) =>
+        e.kind === 'stock' &&
+        !instrumentMetaRefreshRef.current.has(e.sym) &&
+        (instrumentNameNeedsRefresh(e.sym, e.name) || !!e.isin),
     );
     if (!pending.length) return;
     void (async () => {
       for (const ex of pending) {
-        logoRefreshRef.current.add(ex.sym);
+        instrumentMetaRefreshRef.current.add(ex.sym);
         try {
-          const r = await fetchInstrumentResolve(BILLING_API, ex.isin!, ex.kind, ex.name);
-          if (!r.logoUrl) continue;
+          const r = await fetchInstrumentResolve(BILLING_API, ex.isin || ex.sym, ex.kind, ex.name);
+          const nextName =
+            r.name && !instrumentNameNeedsRefresh(ex.sym, r.name) ? r.name.trim().slice(0, 56) : ex.name;
+          const hasLogo = !!r.logoUrl;
+          const hasName = nextName !== ex.name && !instrumentNameNeedsRefresh(ex.sym, nextName);
+          if (!hasLogo && !hasName) continue;
           setWatchlistExtras((prev) =>
             prev.map((x) =>
               x.sym === ex.sym
                 ? {
                     ...x,
-                    logoUrl: r.logoUrl,
+                    ...(hasName ? { name: nextName } : {}),
+                    ...(hasLogo ? { logoUrl: r.logoUrl } : {}),
                     ...(r.logoUrlFallbacks?.length ? { logoUrlFallbacks: r.logoUrlFallbacks } : {}),
                   }
                 : x,
@@ -2607,11 +2622,11 @@ export default function AllWin() {
               if (m.sym !== ex.sym) return m;
               const next = buildMarketItemFromExtra({
                 sym: ex.sym,
-                name: ex.name,
+                name: hasName ? nextName : ex.name,
                 kind: ex.kind,
                 isin: ex.isin,
-                logoUrl: r.logoUrl,
-                logoUrlFallbacks: r.logoUrlFallbacks,
+                logoUrl: r.logoUrl || ex.logoUrl,
+                logoUrlFallbacks: r.logoUrlFallbacks || ex.logoUrlFallbacks,
                 watchlistOnly: ex.watchlistOnly,
               });
               return {
@@ -2625,7 +2640,7 @@ export default function AllWin() {
             }),
           );
         } catch {
-          /* Client-Fallbacks aus Kürzel bleiben aktiv */
+          /* Kürzel/ISIN bleibt bis manuell korrigiert */
         }
       }
     })();

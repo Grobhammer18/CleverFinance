@@ -233,13 +233,86 @@ function formatSecurityName(raw) {
   return cleaned
     .toLowerCase()
     .split(/\s+/)
-    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : ''))
+    .map((w) =>
+      w
+        .split('-')
+        .map((p) => (p ? p.charAt(0).toUpperCase() + p.slice(1) : ''))
+        .join('-'),
+    )
     .join(' ')
     .replace(/\bAg\b/g, 'AG')
     .replace(/\bSe\b/g, 'SE')
     .replace(/\bEtf\b/g, 'ETF')
     .replace(/\bNv\b/g, 'NV')
     .replace(/\bDe\b$/g, 'DE');
+}
+
+function looksLikeTickerName(name, sym) {
+  const n = String(name || '').trim().toUpperCase();
+  const s = String(sym || '').trim().toUpperCase();
+  if (!n || n === s) return true;
+  return /^[A-Z0-9]{1,6}(\.[A-Z]{1,3})?$/.test(n);
+}
+
+function pickBestSecurityName(rows, sym) {
+  if (!Array.isArray(rows) || !rows.length) return '';
+  const candidates = rows
+    .map((r) => formatSecurityName(r.name || ''))
+    .filter((n) => n.length > 2 && !looksLikeTickerName(n, sym));
+  candidates.sort((a, b) => b.length - a.length);
+  return candidates[0] || '';
+}
+
+async function lookupSecurityNameFromYahoo(sym) {
+  try {
+    const ticker = resolveYahooTicker(sym);
+    const data = await fetchJson(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5d`,
+    );
+    const meta = data?.chart?.result?.[0]?.meta;
+    const raw = meta?.longName || meta?.shortName;
+    const name = raw ? formatSecurityName(raw) : '';
+    return name && !looksLikeTickerName(name, sym) ? name : '';
+  } catch {
+    return '';
+  }
+}
+
+async function lookupSecurityNameFromOpenFigi(sym) {
+  const s = String(sym || '').toUpperCase().trim();
+  const dot = s.indexOf('.');
+  const base = dot >= 0 ? s.slice(0, dot) : s;
+  const exchange = dot >= 0 ? s.slice(dot + 1) : '';
+  const exchBySuffix = { DE: 'GR', PA: 'PA', AS: 'AS', L: 'LN', SW: 'SW', MI: 'IM' };
+  const jobs = [];
+  if (exchange && exchBySuffix[exchange]) {
+    jobs.push({ idType: 'TICKER', idValue: base, exchCode: exchBySuffix[exchange] });
+  }
+  jobs.push({ idType: 'TICKER', idValue: dot >= 0 ? base : s, exchCode: 'US' });
+  if (!exchange) jobs.push({ idType: 'TICKER', idValue: s });
+
+  try {
+    const data = await fetchJson('https://api.openfigi.com/v3/mapping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(jobs.slice(0, 3)),
+    });
+    if (!Array.isArray(data)) return '';
+    for (const batch of data) {
+      const row = batch?.data?.[0];
+      const name = row?.name ? formatSecurityName(row.name) : '';
+      if (name && !looksLikeTickerName(name, sym)) return name;
+    }
+  } catch {
+    /* optional */
+  }
+  return '';
+}
+
+async function lookupSecurityName(sym) {
+  const yahoo = await lookupSecurityNameFromYahoo(sym);
+  if (yahoo) return yahoo;
+  return lookupSecurityNameFromOpenFigi(sym);
 }
 
 function yahooTickerFromFigi(row) {
@@ -323,7 +396,7 @@ async function resolveIsinToInstrument(isin, kindHint) {
   const row = de || us || rows[0];
   const sym = yahooTickerFromFigi(row);
   if (!sym) return null;
-  const name = formatSecurityName(row.name || row.ticker || sym);
+  const name = pickBestSecurityName(rows, sym) || formatSecurityName(row.name || row.ticker || sym);
   const kind = kindHint === 'crypto' ? 'crypto' : 'stock';
   if (kind === 'crypto') {
     const logoUrl = `${CRYPTOCURRENCY_ICONS_RAW}/${sym.split('.')[0].toLowerCase()}.png`;
@@ -360,7 +433,12 @@ async function resolveInstrumentInput(input, kindHint, nameHint) {
     return { sym, name: String(nameHint || '').trim().slice(0, 56) || sym, kind, isin: undefined, logoUrl, logoUrlFallbacks: [], resolved: false };
   }
   const { logoUrl, logoUrlFallbacks } = stockLogoFields(sym);
-  const name = String(nameHint || '').trim().slice(0, 56) || sym;
+  const nameHintTrim = String(nameHint || '').trim().slice(0, 56);
+  let name = nameHintTrim || sym;
+  if (!nameHintTrim || looksLikeTickerName(nameHintTrim, sym)) {
+    const looked = await lookupSecurityName(sym);
+    if (looked) name = looked.slice(0, 56);
+  }
   return { sym, name, kind, isin: undefined, logoUrl, logoUrlFallbacks, resolved: false };
 }
 
