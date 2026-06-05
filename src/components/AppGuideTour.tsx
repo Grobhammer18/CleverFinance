@@ -143,6 +143,20 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
     setIndex(0);
   }, [open]);
 
+  useEffect(() => {
+    if (!open || steps.length === 0) return;
+    setIndex((i) => Math.min(i, steps.length - 1));
+  }, [open, steps.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
   useLayoutEffect(() => {
     if (!open || !step) return;
 

@@ -124,6 +124,31 @@ function writeLocalOnboardingDone(userId: string | undefined, email?: string | u
   }
 }
 
+function celebratedPortfolioMilestonesKey(userId: string) {
+  return `allwin.celebratedPortfolioMilestones.${userId}`;
+}
+
+function readCelebratedPortfolioMilestones(userId: string | undefined): Set<PortfolioPowerMilestone> {
+  if (!userId) return new Set();
+  try {
+    const raw = JSON.parse(localStorage.getItem(celebratedPortfolioMilestonesKey(userId)) || '[]');
+    if (!Array.isArray(raw)) return new Set();
+    const allowed = new Set<number>(PORTFOLIO_POWER_MILESTONE_EURS);
+    return new Set(raw.filter((m): m is PortfolioPowerMilestone => typeof m === 'number' && allowed.has(m)));
+  } catch {
+    return new Set();
+  }
+}
+
+function writeCelebratedPortfolioMilestones(userId: string | undefined, milestones: Set<PortfolioPowerMilestone>) {
+  if (!userId) return;
+  try {
+    localStorage.setItem(celebratedPortfolioMilestonesKey(userId), JSON.stringify([...milestones]));
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Bestehende Cloud-Daten ohne onboarding.done (Beta-Migration). */
 function inferOnboardingDoneFromAppState(state: Record<string, unknown>): boolean {
   const hasDebts = Array.isArray(state.debts) && state.debts.length > 0;
@@ -1607,6 +1632,7 @@ export default function AllWin() {
   const prevNotgroschenGoalMetRef = useRef<boolean | null>(null);
   const [portfolioMilestoneOpen, setPortfolioMilestoneOpen] = useState(false);
   const [portfolioMilestoneKind, setPortfolioMilestoneKind] = useState<PortfolioPowerMilestone>(8000);
+  const [celebratedMilestones, setCelebratedMilestones] = useState<Set<PortfolioPowerMilestone>>(() => new Set());
   const prevPortfolioPowerForMilestoneRef = useRef<number | null>(null);
   const [moneyTxListExpanded, setMoneyTxListExpanded] = useState(true);
   const [moneyFormOpen, setMoneyFormOpen] = useState(() => !isMoneyCompactViewport());
@@ -1817,12 +1843,17 @@ export default function AllWin() {
   }, [authUser, authToken, cloudUserStateReady, levelUpMode, debts, notgroschenBalance, notgroschenTarget]);
 
   useEffect(() => {
+    if (authUser?.id) setCelebratedMilestones(readCelebratedPortfolioMilestones(authUser.id));
+  }, [authUser?.id]);
+
+  useEffect(() => {
+    if (appTourOpen) return;
     const allPaid = debts.length > 0 && debts.every((d) => d.remaining <= 0);
     if (allPaid && !prevAllDebtsPaidRef.current) {
       setDebtVictoryOpen(true);
     }
     prevAllDebtsPaidRef.current = allPaid;
-  }, [debts]);
+  }, [debts, appTourOpen]);
 
   useEffect(() => {
     const next = `#${tabToDisplayHash(tab)}`;
@@ -1841,6 +1872,7 @@ export default function AllWin() {
   }, []);
 
   useEffect(() => {
+    if (appTourOpen) return;
     const t = notgroschenTarget;
     const met = t > 0 && notgroschenBalance >= t;
     if (prevNotgroschenGoalMetRef.current === null) {
@@ -1851,9 +1883,10 @@ export default function AllWin() {
       setNotgroschenVictoryOpen(true);
     }
     prevNotgroschenGoalMetRef.current = met;
-  }, [notgroschenBalance, notgroschenTarget]);
+  }, [notgroschenBalance, notgroschenTarget, appTourOpen]);
 
   useEffect(() => {
+    if (appTourOpen || portfolioMilestoneOpen) return;
     const p = portfolioTotalPower;
     const prev = prevPortfolioPowerForMilestoneRef.current;
     if (prev === null) {
@@ -1861,12 +1894,22 @@ export default function AllWin() {
       return;
     }
     const crossed = highestPortfolioMilestoneCrossed(prev, p);
-    if (crossed !== null) {
+    if (crossed !== null && !celebratedMilestones.has(crossed)) {
       setPortfolioMilestoneKind(crossed);
       setPortfolioMilestoneOpen(true);
     }
     prevPortfolioPowerForMilestoneRef.current = p;
-  }, [portfolioTotalPower]);
+  }, [portfolioTotalPower, appTourOpen, portfolioMilestoneOpen, celebratedMilestones]);
+
+  const dismissPortfolioMilestone = useCallback(() => {
+    setPortfolioMilestoneOpen(false);
+    setCelebratedMilestones((prev) => {
+      const next = new Set<PortfolioPowerMilestone>(prev);
+      next.add(portfolioMilestoneKind);
+      writeCelebratedPortfolioMilestones(authUser?.id, next);
+      return next;
+    });
+  }, [authUser?.id, portfolioMilestoneKind]);
 
   /** Orden: feste Liste — automatisch aus Boost / Notgroschen / Portfolio-Power ergänzt. */
   useEffect(() => {
@@ -2913,8 +2956,9 @@ export default function AllWin() {
     setOnboardingV2(p);
     setLevelUpMode(p.levelUpMode);
     const target = notgroschenTargetFromIncome(p.netIncomeMonthly);
+    const emergencyBalance = p.emergency.has ? Math.max(0, p.emergency.balance) : 0;
     setNotgroschenTarget(target);
-    setNotgroschenBalance(p.emergency.has ? Math.max(0, p.emergency.balance) : 0);
+    setNotgroschenBalance(emergencyBalance);
     const mapped: Debt[] = p.debts.map((row, i) => ({
       id: i + 1,
       name: row.name.trim(),
@@ -2925,13 +2969,27 @@ export default function AllWin() {
       kind: row.kind,
     }));
     setDebts(mapped);
+    let projectedPortfolioPower = portfolioBrokerCash;
     if (p.invest) {
       const sh = sharesFromOnboardingInvest(
         p.invest,
         tradableMarket.map(({ sym, price }) => ({ sym, price })),
       );
-      if (sh) setPortfolioShares(normalizePortfolioShares(sh, tradableMarket));
+      if (sh) {
+        setPortfolioShares(normalizePortfolioShares(sh, tradableMarket));
+        projectedPortfolioPower += portfolioEuroValue(sh, tradableMarket);
+      }
     }
+    projectedPortfolioPower = Math.round(projectedPortfolioPower * 100) / 100;
+    prevNotgroschenGoalMetRef.current = target > 0 && emergencyBalance >= target;
+    prevAllDebtsPaidRef.current = mapped.length > 0 && mapped.every((d) => d.remaining <= 0);
+    prevPortfolioPowerForMilestoneRef.current = projectedPortfolioPower;
+    const seededCelebrated = readCelebratedPortfolioMilestones(authUser?.id);
+    for (const m of PORTFOLIO_POWER_MILESTONE_EURS) {
+      if (projectedPortfolioPower >= m) seededCelebrated.add(m);
+    }
+    writeCelebratedPortfolioMilestones(authUser?.id, seededCelebrated);
+    setCelebratedMilestones(seededCelebrated);
     setOnboardingDone(true);
     writeLocalOnboardingDone(authUser?.id, authUser?.email);
     cloudOnboardingHydratedRef.current = true;
@@ -7489,7 +7547,7 @@ export default function AllWin() {
       <PortfolioPowerMilestoneOverlay
         open={portfolioMilestoneOpen}
         milestone={portfolioMilestoneKind}
-        onClose={() => setPortfolioMilestoneOpen(false)}
+        onClose={dismissPortfolioMilestone}
       />
 
       <div style={S.header}>
