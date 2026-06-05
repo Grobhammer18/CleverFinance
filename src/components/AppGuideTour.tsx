@@ -10,6 +10,7 @@ type Props = {
 };
 
 type BubblePos = { left: number; top: number; placement: 'top' | 'bottom' | 'center' };
+type RectSnap = { top: number; left: number; width: number; height: number; bottom: number };
 
 const TAB_BAR_RESERVE = 84;
 const VIEW_MARGIN = 12;
@@ -30,7 +31,25 @@ function viewportBox() {
   };
 }
 
-function computeBubblePosition(rect: DOMRect, bubbleH: number, bubbleW: number): BubblePos {
+function snapRect(r: DOMRect): RectSnap {
+  return { top: r.top, left: r.left, width: r.width, height: r.height, bottom: r.bottom };
+}
+
+function rectsNearEqual(a: RectSnap | null, b: RectSnap | null) {
+  if (!a || !b) return a === b;
+  return (
+    Math.abs(a.top - b.top) < 1 &&
+    Math.abs(a.left - b.left) < 1 &&
+    Math.abs(a.width - b.width) < 1 &&
+    Math.abs(a.height - b.height) < 1
+  );
+}
+
+function bubblePosEqual(a: BubblePos, b: BubblePos) {
+  return a.placement === b.placement && Math.abs(a.left - b.left) < 1 && Math.abs(a.top - b.top) < 1;
+}
+
+function computeBubblePosition(rect: RectSnap, bubbleH: number, bubbleW: number): BubblePos {
   const vp = viewportBox();
   const maxW = Math.min(340, vp.width - VIEW_MARGIN * 2);
   const w = Math.min(bubbleW, maxW);
@@ -65,13 +84,15 @@ function computeBubblePosition(rect: DOMRect, bubbleH: number, bubbleW: number):
 
 export default function AppGuideTour({ open, steps, onClose, onTabChange }: Props) {
   const [index, setIndex] = useState(0);
-  const [rect, setRect] = useState<DOMRect | null>(null);
+  const [rect, setRect] = useState<RectSnap | null>(null);
   const [bubblePos, setBubblePos] = useState<BubblePos>({
     left: 0,
     top: 0,
     placement: 'center',
   });
   const bubbleRef = useRef<HTMLDivElement>(null);
+  const pauseReflowRef = useRef(false);
+  const layoutGenRef = useRef(0);
 
   const step = steps[index];
   const isLast = index >= steps.length - 1;
@@ -82,11 +103,12 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
     if (!step.target) {
       const vp = viewportBox();
       setRect(null);
-      setBubblePos({
+      const centerPos = {
         left: vp.left + vp.width / 2,
         top: vp.top + vp.height / 2,
-        placement: 'center',
-      });
+        placement: 'center' as const,
+      };
+      setBubblePos((prev) => (bubblePosEqual(prev, centerPos) ? prev : centerPos));
       return;
     }
 
@@ -94,21 +116,26 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
     if (!el) {
       const vp = viewportBox();
       setRect(null);
-      setBubblePos({
+      const centerPos = {
         left: vp.left + vp.width / 2,
         top: vp.top + vp.height / 2,
-        placement: 'center',
-      });
+        placement: 'center' as const,
+      };
+      setBubblePos((prev) => (bubblePosEqual(prev, centerPos) ? prev : centerPos));
       return;
     }
 
+    pauseReflowRef.current = true;
     el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
-    const targetRect = el.getBoundingClientRect();
-    setRect(targetRect);
+    pauseReflowRef.current = false;
+
+    const targetRect = snapRect(el.getBoundingClientRect());
+    setRect((prev) => (rectsNearEqual(prev, targetRect) ? prev : targetRect));
 
     const bubbleH = bubbleRef.current?.offsetHeight ?? BUBBLE_ESTIMATE_H;
     const bubbleW = bubbleRef.current?.offsetWidth ?? Math.min(340, window.innerWidth - 24);
-    setBubblePos(computeBubblePosition(targetRect, bubbleH, bubbleW));
+    const nextPos = computeBubblePosition(targetRect, bubbleH, bubbleW);
+    setBubblePos((prev) => (bubblePosEqual(prev, nextPos) ? prev : nextPos));
   }, [step]);
 
   useEffect(() => {
@@ -118,32 +145,38 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
 
   useLayoutEffect(() => {
     if (!open || !step) return;
+
+    const gen = ++layoutGenRef.current;
     if (step.tab) onTabChange(step.tab);
 
-    layoutStep();
-    const t1 = window.setTimeout(layoutStep, 100);
-    const t2 = window.setTimeout(layoutStep, 320);
+    const run = () => {
+      if (layoutGenRef.current !== gen) return;
+      layoutStep();
+    };
 
-    const onReflow = () => layoutStep();
+    run();
+    const raf = requestAnimationFrame(() => requestAnimationFrame(run));
+    const t1 = window.setTimeout(run, 120);
+    const t2 = window.setTimeout(run, 360);
+
+    const onReflow = () => {
+      if (pauseReflowRef.current) return;
+      run();
+    };
     window.addEventListener('resize', onReflow);
     window.visualViewport?.addEventListener('resize', onReflow);
     window.visualViewport?.addEventListener('scroll', onReflow);
-    window.addEventListener('scroll', onReflow, true);
 
     return () => {
+      layoutGenRef.current += 1;
+      cancelAnimationFrame(raf);
       window.clearTimeout(t1);
       window.clearTimeout(t2);
       window.removeEventListener('resize', onReflow);
       window.visualViewport?.removeEventListener('resize', onReflow);
       window.visualViewport?.removeEventListener('scroll', onReflow);
-      window.removeEventListener('scroll', onReflow, true);
     };
   }, [open, index, step, layoutStep, onTabChange]);
-
-  useLayoutEffect(() => {
-    if (!open || !step?.target || !rect) return;
-    layoutStep();
-  }, [open, step?.target, rect, layoutStep]);
 
   if (!open || !step || steps.length === 0) return null;
 
