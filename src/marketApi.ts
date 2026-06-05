@@ -39,6 +39,7 @@ export type InstrumentResolveDto = {
   kind: MarketInstrumentKind;
   isin?: string;
   logoUrl?: string;
+  logoUrlFallbacks?: string[];
   resolved: boolean;
 };
 

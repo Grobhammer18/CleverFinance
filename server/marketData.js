@@ -259,6 +259,54 @@ function stockLogoUrl(sym) {
   return `https://financialmodelingprep.com/image-stock/${String(sym).replace(/\./g, '-')}.png`;
 }
 
+function stockLogoDotUrl(sym) {
+  return `https://financialmodelingprep.com/image-stock/${String(sym)}.png`;
+}
+
+function companiesMarketCapLogoUrl(ticker) {
+  const base = String(ticker).split('.')[0].toUpperCase();
+  return `https://companiesmarketcap.com/img/company-logos/64/${base}.webp`;
+}
+
+/** Mehrere Logo-URLs — US-Ticker zuerst (MSF.DE → MSFT), dann Basis ohne Börse (MOH.DE → MOH). */
+function stockLogoUrlCandidates(sym, opts = {}) {
+  const s = String(sym || '')
+    .toUpperCase()
+    .trim();
+  const out = [];
+  const add = (url) => {
+    if (url && !out.includes(url)) out.push(url);
+  };
+
+  const us = opts.usTicker ? String(opts.usTicker).toUpperCase().trim() : '';
+  if (us) {
+    add(stockLogoUrl(us));
+    add(stockLogoDotUrl(us));
+    add(companiesMarketCapLogoUrl(us));
+  }
+
+  const dot = s.indexOf('.');
+  const base = dot >= 0 ? s.slice(0, dot) : s;
+  const exchange = dot >= 0 ? s.slice(dot + 1) : '';
+
+  if (exchange && ['PA', 'AS', 'L', 'SW', 'MI'].includes(exchange)) {
+    add(stockLogoDotUrl(s));
+  }
+
+  if (exchange) {
+    add(stockLogoUrl(base));
+    add(companiesMarketCapLogoUrl(base));
+  }
+
+  add(stockLogoUrl(s));
+  return out;
+}
+
+function stockLogoFields(sym, opts = {}) {
+  const urls = stockLogoUrlCandidates(sym, opts);
+  return { logoUrl: urls[0], logoUrlFallbacks: urls.slice(1) };
+}
+
 const CRYPTOCURRENCY_ICONS_RAW =
   'https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color';
 
@@ -277,11 +325,13 @@ async function resolveIsinToInstrument(isin, kindHint) {
   if (!sym) return null;
   const name = formatSecurityName(row.name || row.ticker || sym);
   const kind = kindHint === 'crypto' ? 'crypto' : 'stock';
-  const logoUrl =
-    kind === 'crypto'
-      ? `${CRYPTOCURRENCY_ICONS_RAW}/${sym.split('.')[0].toLowerCase()}.png`
-      : stockLogoUrl(sym);
-  return { sym: sym.toUpperCase(), name, kind, isin, logoUrl, resolved: true };
+  if (kind === 'crypto') {
+    const logoUrl = `${CRYPTOCURRENCY_ICONS_RAW}/${sym.split('.')[0].toLowerCase()}.png`;
+    return { sym: sym.toUpperCase(), name, kind, isin, logoUrl, logoUrlFallbacks: [], resolved: true };
+  }
+  const usTicker = us ? yahooTickerFromFigi(us)?.split('.')[0] : undefined;
+  const { logoUrl, logoUrlFallbacks } = stockLogoFields(sym, { usTicker });
+  return { sym: sym.toUpperCase(), name, kind, isin, logoUrl, logoUrlFallbacks, resolved: true };
 }
 
 function sanitizeSymbol(raw) {
@@ -305,10 +355,13 @@ async function resolveInstrumentInput(input, kindHint, nameHint) {
   if (!sym) throw new Error('Bitte Börsen-Kürzel (z. B. AAPL, SAP.DE) oder gültige ISIN eingeben.');
   const kind = kindHint === 'crypto' ? 'crypto' : 'stock';
   const slug = sym.split('.')[0].toLowerCase();
-  const logoUrl =
-    kind === 'crypto' ? `${CRYPTOCURRENCY_ICONS_RAW}/${slug}.png` : stockLogoUrl(sym);
+  if (kind === 'crypto') {
+    const logoUrl = `${CRYPTOCURRENCY_ICONS_RAW}/${slug}.png`;
+    return { sym, name: String(nameHint || '').trim().slice(0, 56) || sym, kind, isin: undefined, logoUrl, logoUrlFallbacks: [], resolved: false };
+  }
+  const { logoUrl, logoUrlFallbacks } = stockLogoFields(sym);
   const name = String(nameHint || '').trim().slice(0, 56) || sym;
-  return { sym, name, kind, isin: undefined, logoUrl, resolved: false };
+  return { sym, name, kind, isin: undefined, logoUrl, logoUrlFallbacks, resolved: false };
 }
 
 export function mountMarketRoutes(app) {

@@ -1,9 +1,10 @@
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { allwinPalette } from '../theme/allwinPalette';
 
 export type MarketAssetLogoFields = {
   icon: string;
   logoUrl?: string;
+  logoUrlFallbacks?: string[];
 };
 
 type Props = {
@@ -19,15 +20,35 @@ type Props = {
  * Dunkler Kachel-Hintergrund (weiße Marken-Logos wie Apple bleiben sichtbar).
  */
 export default function MarketAssetIcon({ item, size, borderRadius, style }: Props) {
-  const [imgFailed, setImgFailed] = useState(false);
+  const candidates = useMemo(() => {
+    const list: string[] = [];
+    if (item.logoUrl?.trim()) list.push(item.logoUrl.trim());
+    if (item.logoUrlFallbacks?.length) {
+      for (const u of item.logoUrlFallbacks) {
+        const t = u?.trim();
+        if (t && !list.includes(t)) list.push(t);
+      }
+    }
+    return list;
+  }, [item.logoUrl, item.logoUrlFallbacks]);
+
+  const [candidateIdx, setCandidateIdx] = useState(0);
+  const [exhausted, setExhausted] = useState(false);
+
+  useEffect(() => {
+    setCandidateIdx(0);
+    setExhausted(false);
+  }, [candidates.join('\0')]);
+
   const br = borderRadius ?? Math.max(8, Math.round(size * 0.28));
-  const url = item.logoUrl;
-  const showImg = Boolean(url && !imgFailed);
+  const url = candidates[candidateIdx];
+  const showImg = Boolean(url && !exhausted);
   const pad = Math.max(2, Math.round(size * 0.1));
 
   if (showImg && url) {
     return (
       <img
+        key={url}
         src={url}
         alt=""
         aria-hidden
@@ -36,7 +57,13 @@ export default function MarketAssetIcon({ item, size, borderRadius, style }: Pro
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
-        onError={() => setImgFailed(true)}
+        onError={() => {
+          if (candidateIdx < candidates.length - 1) {
+            setCandidateIdx((i) => i + 1);
+          } else {
+            setExhausted(true);
+          }
+        }}
         draggable={false}
         style={{
           width: size,

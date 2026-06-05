@@ -26,6 +26,7 @@ import { allwinPalette as awBg } from '../theme/allwinPalette';
 import { marketHistoryRange, sparkPricesFromHistory, type MarketDailyPrice } from '../marketHistory';
 import { fetchInstrumentResolve, fetchMarketHistory, fetchMarketQuotes, type MarketInstrumentKind } from '../marketApi';
 import { instrumentDisplayLines, isIsinCode, normalizeIsin } from '../instrumentDisplay';
+import { stockLogoUrlCandidates } from '../stockLogos';
 import { getOverviewDemoSnapshot, OVERVIEW_DEMO_HINT } from '../demo/overviewDemoSample';
 import {
   PORTFOLIO_POWER_MILESTONE_EURS,
@@ -696,6 +697,7 @@ type MarketItem = {
   kind: MarketInstrumentKind;
   /** Markenlogo (CDN) — Krypto oft CoinGecko, Aktien/Titel z. B. FMP oder Wikimedia. */
   logoUrl?: string;
+  logoUrlFallbacks?: string[];
   /** Tages-Schlusskurse (älteste zuerst), vom Server. */
   historyDaily?: MarketDailyPrice[];
   historySource?: string;
@@ -788,6 +790,7 @@ type WatchlistExtraPersist = {
   /** Ursprüngliche ISIN, wenn per OpenFIGI auf Börsen-Kürzel gemappt. */
   isin?: string;
   logoUrl?: string;
+  logoUrlFallbacks?: string[];
   /** Nur Live-Watchlist — kein Eintrag unter Portfolio Power / Order. */
   watchlistOnly?: boolean;
 };
@@ -849,21 +852,35 @@ function normalizeWatchlistExtrasPersist(raw: unknown): WatchlistExtraPersist[] 
     seen.add(sym);
     const isinRaw = typeof r.isin === 'string' ? normalizeIsin(r.isin) : '';
     const logoUrl = typeof r.logoUrl === 'string' && r.logoUrl.trim() ? r.logoUrl.trim() : undefined;
+    const logoUrlFallbacks = Array.isArray(r.logoUrlFallbacks)
+      ? r.logoUrlFallbacks
+          .filter((u): u is string => typeof u === 'string' && !!u.trim())
+          .map((u) => u.trim())
+          .slice(0, 8)
+      : [];
     out.push({
       sym,
       name: nameRaw || sym,
       kind,
       ...(isinRaw ? { isin: isinRaw } : {}),
       ...(logoUrl ? { logoUrl } : {}),
+      ...(logoUrlFallbacks.length ? { logoUrlFallbacks } : {}),
       ...(watchlistOnly ? { watchlistOnly: true } : {}),
     });
   }
   return out.slice(0, 40);
 }
 
-function fmpStockLogoUrl(sym: string): string {
-  const slug = sym.replace(/\./g, '-');
-  return `https://financialmodelingprep.com/image-stock/${slug}.png`;
+function mergeLogoCandidates(primary: string | undefined, fallbacks: string[] | undefined, computed: string[]): string[] {
+  const out: string[] = [];
+  const add = (url: string | undefined) => {
+    const t = url?.trim();
+    if (t && !out.includes(t)) out.push(t);
+  };
+  for (const u of computed) add(u);
+  add(primary);
+  if (fallbacks?.length) for (const u of fallbacks) add(u);
+  return out.slice(0, 10);
 }
 
 function provisionalLogoFields(symRaw: string, kind: 'stock' | 'crypto', name?: string): MarketAssetLogoFields {
@@ -877,11 +894,15 @@ function buildMarketItemFromExtra(extra: WatchlistExtraPersist): MarketItem {
     typeof extra.name === 'string' && extra.name.trim() ? extra.name.trim().slice(0, 56) : sym;
   const kind = extra.kind === 'crypto' ? 'crypto' : 'stock';
   const slugLower = sym.split('.')[0].toLowerCase().replace(/\./g, '');
-  const logoUrl =
-    extra.logoUrl ||
-    (kind === 'crypto' ? `${CRYPTOCURRENCY_ICONS_RAW}/${slugLower}.png` : fmpStockLogoUrl(sym));
   const icon = kind === 'crypto' ? '◆' : '◈';
-  return { sym, name, price: 0, change: 0, kind, icon, logoUrl };
+  if (kind === 'crypto') {
+    const logoUrl = extra.logoUrl || `${CRYPTOCURRENCY_ICONS_RAW}/${slugLower}.png`;
+    return { sym, name, price: 0, change: 0, kind, icon, logoUrl, logoUrlFallbacks: extra.logoUrlFallbacks };
+  }
+  const candidates = mergeLogoCandidates(extra.logoUrl, extra.logoUrlFallbacks, stockLogoUrlCandidates(sym));
+  const logoUrl = candidates[0];
+  const logoUrlFallbacks = candidates.slice(1);
+  return { sym, name, price: 0, change: 0, kind, icon, logoUrl, logoUrlFallbacks };
 }
 
 function instrumentMetaForSym(
@@ -2547,6 +2568,7 @@ export default function AllWin() {
             kind: r.kind,
             isin: r.isin || normalizeIsin(ex.sym),
             logoUrl: r.logoUrl,
+            logoUrlFallbacks: r.logoUrlFallbacks,
           });
         } catch {
           /* ISIN bleibt bis manuell korrigiert */
@@ -2555,6 +2577,59 @@ export default function AllWin() {
       void refreshMarketQuotes();
     })();
   }, [watchlistExtras, BILLING_API, refreshMarketQuotes]);
+
+  const logoRefreshRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!BILLING_API) return;
+    const pending = watchlistExtras.filter(
+      (e) => !!e.isin && e.kind === 'stock' && !logoRefreshRef.current.has(e.sym),
+    );
+    if (!pending.length) return;
+    void (async () => {
+      for (const ex of pending) {
+        logoRefreshRef.current.add(ex.sym);
+        try {
+          const r = await fetchInstrumentResolve(BILLING_API, ex.isin!, ex.kind, ex.name);
+          if (!r.logoUrl) continue;
+          setWatchlistExtras((prev) =>
+            prev.map((x) =>
+              x.sym === ex.sym
+                ? {
+                    ...x,
+                    logoUrl: r.logoUrl,
+                    ...(r.logoUrlFallbacks?.length ? { logoUrlFallbacks: r.logoUrlFallbacks } : {}),
+                  }
+                : x,
+            ),
+          );
+          setMarket((prev) =>
+            prev.map((m) => {
+              if (m.sym !== ex.sym) return m;
+              const next = buildMarketItemFromExtra({
+                sym: ex.sym,
+                name: ex.name,
+                kind: ex.kind,
+                isin: ex.isin,
+                logoUrl: r.logoUrl,
+                logoUrlFallbacks: r.logoUrlFallbacks,
+                watchlistOnly: ex.watchlistOnly,
+              });
+              return {
+                ...next,
+                price: m.price,
+                change: m.change,
+                historyDaily: m.historyDaily,
+                historySource: m.historySource,
+                quoteSource: m.quoteSource,
+              };
+            }),
+          );
+        } catch {
+          /* Client-Fallbacks aus Kürzel bleiben aktiv */
+        }
+      }
+    })();
+  }, [watchlistExtras, BILLING_API]);
 
   useEffect(() => {
     if (tradableMarket.length === 0) return;
@@ -2595,7 +2670,14 @@ export default function AllWin() {
   }, [authUser, earnedOrdenPresetIds]);
 
   const applyResolvedInstrument = (
-    resolved: { sym: string; name: string; kind: 'stock' | 'crypto'; isin?: string; logoUrl?: string },
+    resolved: {
+      sym: string;
+      name: string;
+      kind: 'stock' | 'crypto';
+      isin?: string;
+      logoUrl?: string;
+      logoUrlFallbacks?: string[];
+    },
     watchlistOnly: boolean,
     toastLabel?: string,
   ) => {
@@ -2620,6 +2702,7 @@ export default function AllWin() {
       kind,
       ...(resolved.isin ? { isin: resolved.isin } : {}),
       ...(resolved.logoUrl ? { logoUrl: resolved.logoUrl } : {}),
+      ...(resolved.logoUrlFallbacks?.length ? { logoUrlFallbacks: resolved.logoUrlFallbacks } : {}),
       ...(watchlistOnly ? { watchlistOnly: true } : {}),
     };
     const item = buildMarketItemFromExtra(extra);
@@ -2640,7 +2723,17 @@ export default function AllWin() {
     );
   };
 
-  const renameInstrumentSym = (oldSym: string, resolved: { sym: string; name: string; kind: 'stock' | 'crypto'; isin?: string; logoUrl?: string }) => {
+  const renameInstrumentSym = (
+    oldSym: string,
+    resolved: {
+      sym: string;
+      name: string;
+      kind: 'stock' | 'crypto';
+      isin?: string;
+      logoUrl?: string;
+      logoUrlFallbacks?: string[];
+    },
+  ) => {
     const newSym = sanitizeWatchlistSymbol(resolved.sym) || resolved.sym.toUpperCase();
     if (oldSym === newSym) {
       setWatchlistExtras((prev) =>
@@ -2652,6 +2745,7 @@ export default function AllWin() {
                 kind: resolved.kind,
                 ...(resolved.isin ? { isin: resolved.isin } : {}),
                 ...(resolved.logoUrl ? { logoUrl: resolved.logoUrl } : {}),
+                ...(resolved.logoUrlFallbacks?.length ? { logoUrlFallbacks: resolved.logoUrlFallbacks } : {}),
               }
             : x,
         ),
@@ -2665,6 +2759,7 @@ export default function AllWin() {
                 kind: resolved.kind,
                 isin: resolved.isin,
                 logoUrl: resolved.logoUrl,
+                logoUrlFallbacks: resolved.logoUrlFallbacks,
               })
             : m,
         ),
@@ -2680,6 +2775,7 @@ export default function AllWin() {
           kind: resolved.kind,
           ...(resolved.isin ? { isin: resolved.isin } : {}),
           ...(resolved.logoUrl ? { logoUrl: resolved.logoUrl } : {}),
+          ...(resolved.logoUrlFallbacks?.length ? { logoUrlFallbacks: resolved.logoUrlFallbacks } : {}),
           ...(prev.find((x) => x.sym === oldSym)?.watchlistOnly ? { watchlistOnly: true } : {}),
         }),
     );
@@ -2691,6 +2787,7 @@ export default function AllWin() {
         kind: resolved.kind,
         isin: resolved.isin,
         logoUrl: resolved.logoUrl,
+        logoUrlFallbacks: resolved.logoUrlFallbacks,
       };
       const item = { ...buildMarketItemFromExtra(extra), price: old?.price ?? 0, change: old?.change ?? 0, historyDaily: old?.historyDaily };
       return prev.filter((m) => m.sym !== oldSym).concat(item);
@@ -2718,7 +2815,14 @@ export default function AllWin() {
     const kind = wlAddKind === 'crypto' ? 'crypto' : 'stock';
     setWlAddLoading(true);
     try {
-      let resolved: { sym: string; name: string; kind: 'stock' | 'crypto'; isin?: string; logoUrl?: string };
+      let resolved: {
+        sym: string;
+        name: string;
+        kind: 'stock' | 'crypto';
+        isin?: string;
+        logoUrl?: string;
+        logoUrlFallbacks?: string[];
+      };
       if (BILLING_API) {
         const r = await fetchInstrumentResolve(BILLING_API, raw, kind, wlAddName.trim());
         resolved = {
@@ -2727,6 +2831,7 @@ export default function AllWin() {
           kind: r.kind,
           isin: r.isin,
           logoUrl: r.logoUrl,
+          logoUrlFallbacks: r.logoUrlFallbacks,
         };
       } else if (isIsinCode(raw)) {
         showToast('ISIN-Auflösung braucht den Billing-Server (Railway).', 'error');
