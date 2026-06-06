@@ -33,6 +33,7 @@ import {
   fetchEurRate,
   formatForeignPaidLine,
   MONEY_CURRENCIES,
+  moneyCurrencyOptionLabel,
 } from '../currencyFx';
 import { getOverviewDemoSnapshot, OVERVIEW_DEMO_HINT } from '../demo/overviewDemoSample';
 import {
@@ -5803,14 +5804,23 @@ export default function AllWin() {
               onChange={(e) => setForm((f) => ({ ...f, amount: normalizeMoneyDecimalInput(e.target.value) }))}
             />
             <select
-              style={{ ...S.select, width: 92, flexShrink: 0, marginBottom: 0, padding: '10px 8px' }}
+              style={{
+                ...S.select,
+                width: 'auto',
+                minWidth: 118,
+                maxWidth: 148,
+                flexShrink: 0,
+                marginBottom: 0,
+                padding: '10px 8px',
+                fontSize: 12,
+              }}
               value={form.currency}
               onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
               aria-label="Währung"
             >
               {MONEY_CURRENCIES.map((c) => (
                 <option key={c.code} value={c.code}>
-                  {c.code}
+                  {moneyCurrencyOptionLabel(c.code)}
                 </option>
               ))}
             </select>

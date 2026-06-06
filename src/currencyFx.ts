@@ -39,6 +39,11 @@ export function moneyCurrencySymbol(code: string): string {
   return CURRENCY_SYMBOL.get(code) || code;
 }
 
+export function moneyCurrencyOptionLabel(code: string): string {
+  const c = MONEY_CURRENCIES.find((x) => x.code === code);
+  return c ? `${c.code} (${c.label})` : code;
+}
+
 export function formatForeignPaidLine(amount: number, currency: string): string {
   const sym = moneyCurrencySymbol(currency);
   const n = Number(amount);
