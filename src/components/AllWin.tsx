@@ -28,12 +28,15 @@ import { fetchInstrumentResolve, fetchMarketHistory, fetchMarketQuotes, type Mar
 import { instrumentDisplayLines, isIsinCode, normalizeIsin } from '../instrumentDisplay';
 import { stockLogoUrlCandidates } from '../stockLogos';
 import {
-  BASE_CURRENCY,
-  convertForeignToEur,
-  fetchEurRate,
+  convertForeignToBase,
+  fetchFxRate,
   formatForeignPaidLine,
+  formatMoneyAmount,
   MONEY_CURRENCIES,
+  moneyCurrencyLabel,
   moneyCurrencyOptionLabel,
+  moneyCurrencySymbol,
+  normalizeBaseCurrency,
 } from '../currencyFx';
 import { getOverviewDemoSnapshot, OVERVIEW_DEMO_HINT } from '../demo/overviewDemoSample';
 import {
@@ -583,6 +586,7 @@ type UserStateCache = {
   notgroschenTarget?: number;
   portfolioBrokerCash?: number;
   levelUpMode?: LevelUpMode;
+  baseCurrency?: string;
   savedAt?: number;
 };
 
@@ -1529,6 +1533,8 @@ export default function AllWin() {
   const APPLE_REDIRECT_URI = (import.meta as any).env?.VITE_APPLE_REDIRECT_URI || window.location.origin;
   const [tab, setTab] = useState(() => parseAllwinTabHash() ?? 'dashboard');
   const _bootCache = readInitialUserCache();
+  const _bootBaseCurrency = normalizeBaseCurrency(_bootCache?.baseCurrency);
+  const [baseCurrency, setBaseCurrency] = useState(_bootBaseCurrency);
   const [debts, setDebts] = useState<Debt[]>(() =>
     Array.isArray(_bootCache?.debts)
       ? _bootCache.debts.map((d) => ({ ...d, kind: d.kind === 'house' ? 'house' : 'consumer' }))
@@ -1551,7 +1557,7 @@ export default function AllWin() {
   const [form, setForm] = useState<FormState>({
     type: 'ausgabe',
     amount: '',
-    currency: BASE_CURRENCY,
+    currency: _bootBaseCurrency,
     category: CATS.ausgaben[0],
     note: '',
     date: todayIsoDate(),
@@ -1767,6 +1773,10 @@ export default function AllWin() {
         if (cached.levelUpMode) {
           setLevelUpMode(resolveLevelUpMode({ fromCache: cached.levelUpMode, debts: cached.debts ?? [] }));
         }
+        if (cached.baseCurrency) {
+          const bc = normalizeBaseCurrency(cached.baseCurrency);
+          setBaseCurrency(bc);
+        }
       });
     }
   }, [authUser?.id, authUser?.email, authToken]);
@@ -1857,13 +1867,13 @@ export default function AllWin() {
       ),
     [transactions, form.type, form.category, form.note],
   );
-  const [fxEurPerUnit, setFxEurPerUnit] = useState<number>(1);
+  const [fxBasePerUnit, setFxBasePerUnit] = useState<number>(1);
   const [fxRateDate, setFxRateDate] = useState('');
   const [fxLoading, setFxLoading] = useState(false);
   const [fxError, setFxError] = useState('');
   useEffect(() => {
-    if (form.currency === BASE_CURRENCY) {
-      setFxEurPerUnit(1);
+    if (form.currency === baseCurrency) {
+      setFxBasePerUnit(1);
       setFxRateDate('');
       setFxError('');
       setFxLoading(false);
@@ -1872,16 +1882,16 @@ export default function AllWin() {
     let cancelled = false;
     setFxLoading(true);
     setFxError('');
-    void fetchEurRate(form.currency, BILLING_API)
+    void fetchFxRate(form.currency, baseCurrency, BILLING_API)
       .then((q) => {
         if (cancelled) return;
-        setFxEurPerUnit(q.eurPerUnit);
+        setFxBasePerUnit(q.basePerUnit);
         setFxRateDate(q.date);
       })
       .catch(() => {
         if (!cancelled) {
           setFxError('Wechselkurs gerade nicht verfügbar.');
-          setFxEurPerUnit(NaN);
+          setFxBasePerUnit(NaN);
         }
       })
       .finally(() => {
@@ -1890,13 +1900,13 @@ export default function AllWin() {
     return () => {
       cancelled = true;
     };
-  }, [form.currency, BILLING_API]);
-  const convertedEurPreview = useMemo(() => {
-    if (form.currency === BASE_CURRENCY) return null;
+  }, [form.currency, baseCurrency, BILLING_API]);
+  const convertedBasePreview = useMemo(() => {
+    if (form.currency === baseCurrency) return null;
     const raw = parseFloat(String(form.amount).replace(/\s/g, '').replace(',', '.'));
-    if (Number.isNaN(raw) || raw <= 0 || !Number.isFinite(fxEurPerUnit) || fxEurPerUnit <= 0) return null;
-    return convertForeignToEur(raw, fxEurPerUnit);
-  }, [form.amount, form.currency, fxEurPerUnit]);
+    if (Number.isNaN(raw) || raw <= 0 || !Number.isFinite(fxBasePerUnit) || fxBasePerUnit <= 0) return null;
+    return convertForeignToBase(raw, fxBasePerUnit);
+  }, [form.amount, form.currency, baseCurrency, fxBasePerUnit]);
   const chartFixedPie = useMemo(
     () =>
       fixedCostOverviewRows
@@ -2315,9 +2325,13 @@ export default function AllWin() {
           const pr = prof as { ordenEarnedPresetIds?: unknown; manualOrden?: unknown };
           ordenLoad = normalizeEarnedOrdenOnLoad(pr.ordenEarnedPresetIds, pr.manualOrden);
         }
+        const loadedBaseCurrency = normalizeBaseCurrency(
+          (state as { baseCurrency?: unknown }).baseCurrency ?? cached?.baseCurrency,
+        );
         flushSync(() => {
           setOnboardingV2(v2);
           setLevelUpMode(resolvedMode);
+          setBaseCurrency(loadedBaseCurrency);
           setDebts(
             debtsToApply.map((d) => ({
               ...d,
@@ -2339,6 +2353,7 @@ export default function AllWin() {
           notgroschenTarget: ngTarget,
           portfolioBrokerCash: brokerCash,
           levelUpMode: resolvedMode,
+          baseCurrency: loadedBaseCurrency,
         });
         const recoveredFromCache =
           cachedTx.length > cloudTx.length ||
@@ -2378,6 +2393,7 @@ export default function AllWin() {
       const ngB = override?.notgroschenBalance ?? notgroschenBalance;
       const ngT = override?.notgroschenTarget ?? notgroschenTarget;
       const broker = override?.portfolioBrokerCash ?? portfolioBrokerCash;
+      const baseCur = normalizeBaseCurrency(override?.baseCurrency ?? baseCurrency);
       writeUserStateCache(authUser.id, {
         transactions: txList,
         debts: debtList,
@@ -2385,6 +2401,7 @@ export default function AllWin() {
         notgroschenTarget: ngT,
         portfolioBrokerCash: broker,
         levelUpMode,
+        baseCurrency: baseCur,
       });
       const hasMoneyData = txList.length > 0 || debtList.length > 0;
       if (!cloudPersistReadyRef.current && !hasMoneyData && !options?.replaceTransactions && !options?.replaceDebts) {
@@ -2403,6 +2420,7 @@ export default function AllWin() {
         watchlistExtras,
         portfolioExcludedBaseSyms,
         dailyVermogenSnapshots,
+        baseCurrency: baseCur,
       };
       const canCloudPersist = cloudPersistReadyRef.current;
       const clientSavedAt = Date.now();
@@ -2503,8 +2521,28 @@ export default function AllWin() {
       onboardingDone,
       onboardingV2,
       levelUpMode,
+      baseCurrency,
     ],
   );
+
+  const applyBaseCurrency = useCallback(
+    (code: string) => {
+      const next = normalizeBaseCurrency(code);
+      setBaseCurrency(next);
+      setForm((f) => (editingTxId == null ? { ...f, currency: next } : f));
+      if (authUser?.id) {
+        writeUserStateCache(authUser.id, { baseCurrency: next });
+        void persistUserState({ baseCurrency: next }, { background: true });
+      }
+    },
+    [authUser?.id, editingTxId, persistUserState],
+  );
+
+  useEffect(() => {
+    if (moneyFormOpen && editingTxId == null) {
+      setForm((f) => (f.currency === baseCurrency ? f : { ...f, currency: baseCurrency }));
+    }
+  }, [moneyFormOpen, editingTxId, baseCurrency]);
 
   useEffect(() => {
     if (!authUser?.id) return;
@@ -2515,8 +2553,9 @@ export default function AllWin() {
       notgroschenTarget,
       portfolioBrokerCash,
       levelUpMode,
+      baseCurrency,
     });
-  }, [authUser?.id, transactions, debts, notgroschenBalance, notgroschenTarget, portfolioBrokerCash, levelUpMode]);
+  }, [authUser?.id, transactions, debts, notgroschenBalance, notgroschenTarget, portfolioBrokerCash, levelUpMode, baseCurrency]);
 
   useEffect(() => {
     if (!authToken || !authUser?.id) return;
@@ -3448,7 +3487,7 @@ export default function AllWin() {
     setForm({
       type: 'ausgabe',
       amount: '',
-      currency: BASE_CURRENCY,
+      currency: baseCurrency,
       category: CATS.ausgaben[0],
       note: '',
       date: todayIsoDate(),
@@ -3560,11 +3599,11 @@ export default function AllWin() {
     setForm({
       type: tx.type,
       amount:
-        tx.foreignAmount != null && tx.foreignCurrency && tx.foreignCurrency !== BASE_CURRENCY
+        tx.foreignAmount != null && tx.foreignCurrency && tx.foreignCurrency !== baseCurrency
           ? String(tx.foreignAmount).replace('.', ',')
           : String(tx.amount).replace('.', ','),
       currency:
-        tx.foreignCurrency && tx.foreignCurrency !== BASE_CURRENCY ? tx.foreignCurrency : BASE_CURRENCY,
+        tx.foreignCurrency && tx.foreignCurrency !== baseCurrency ? tx.foreignCurrency : baseCurrency,
       category: tx.category,
       note: tx.note || '',
       date: txDateToInputValue(tx.date),
@@ -3585,15 +3624,15 @@ export default function AllWin() {
     let foreignCurrency: string | undefined;
     let fxRateToEur: number | undefined;
 
-    if (form.currency !== BASE_CURRENCY) {
-      if (!Number.isFinite(fxEurPerUnit) || fxEurPerUnit <= 0) {
+    if (form.currency !== baseCurrency) {
+      if (!Number.isFinite(fxBasePerUnit) || fxBasePerUnit <= 0) {
         showToast(fxError || 'Wechselkurs noch nicht geladen — bitte kurz warten.', 'error');
         return;
       }
       foreignAmount = Math.round(rawAmt * 100) / 100;
       foreignCurrency = form.currency;
-      fxRateToEur = fxEurPerUnit;
-      amt = convertForeignToEur(rawAmt, fxEurPerUnit);
+      fxRateToEur = fxBasePerUnit;
+      amt = convertForeignToBase(rawAmt, fxBasePerUnit);
     } else {
       amt = Math.round(rawAmt * 100) / 100;
     }
@@ -5470,7 +5509,7 @@ export default function AllWin() {
           {tx.type === 'einnahme' ? '+' : '-'}
           {fmt(+tx.amount)}
         </div>
-        {tx.foreignCurrency && tx.foreignAmount != null && tx.foreignCurrency !== BASE_CURRENCY && (
+        {tx.foreignCurrency && tx.foreignAmount != null && tx.foreignCurrency !== baseCurrency && (
           <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 500, lineHeight: 1.3, textAlign: 'right' }}>
             {formatForeignPaidLine(tx.foreignAmount, tx.foreignCurrency)}
           </div>
@@ -5616,7 +5655,7 @@ export default function AllWin() {
                 top: '100%',
                 right: 0,
                 marginTop: 6,
-                minWidth: 240,
+                minWidth: 260,
                 background: awBg.card,
                 border: `1px solid ${awBg.cardBorder}`,
                 borderRadius: 8,
@@ -5651,6 +5690,38 @@ export default function AllWin() {
                   Öffnet Boost mit Formular — z. B. nach neuem Kredit
                 </span>
               </button>
+              <div
+                style={{
+                  borderTop: `1px solid ${awBg.cardBorder}`,
+                  marginTop: 4,
+                  paddingTop: 8,
+                  paddingBottom: 4,
+                }}
+              >
+                <div style={{ fontSize: 11, color: '#7d8590', padding: '4px 12px 6px', fontWeight: 600 }}>
+                  Grundwährung
+                </div>
+                <select
+                  value={baseCurrency}
+                  onChange={(e) => applyBaseCurrency(e.target.value)}
+                  style={{
+                    ...S.select,
+                    margin: '0 8px 6px',
+                    width: 'calc(100% - 16px)',
+                    fontSize: 12,
+                  }}
+                  aria-label="Grundwährung"
+                >
+                  {MONEY_CURRENCIES.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {moneyCurrencyOptionLabel(c.code)}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ fontSize: 10, color: '#7d8590', padding: '0 12px 8px', lineHeight: 1.45 }}>
+                  Standard in „Neue Buchung“ — Fremdwährungen werden hierhin umgerechnet.
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -5796,8 +5867,8 @@ export default function AllWin() {
               style={{ ...S.input, flex: 1, marginBottom: 0 }}
               inputMode="decimal"
               placeholder={
-                form.currency === BASE_CURRENCY
-                  ? 'Betrag in € (z. B. 3200,50)'
+                form.currency === baseCurrency
+                  ? `Betrag in ${moneyCurrencySymbol(baseCurrency)} (z. B. 3200,50)`
                   : `Betrag in ${form.currency} (Bar vor Ort)`
               }
               value={form.amount}
@@ -5825,18 +5896,20 @@ export default function AllWin() {
               ))}
             </select>
           </div>
-          {form.currency !== BASE_CURRENCY && (
+          {form.currency !== baseCurrency && (
             <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.45 }}>
               {fxLoading && 'Wechselkurs wird geladen…'}
               {!fxLoading && fxError && fxError}
-              {!fxLoading && !fxError && convertedEurPreview != null && (
+              {!fxLoading && !fxError && convertedBasePreview != null && (
                 <>
-                  ≈ <strong style={{ color: '#c9d1d9' }}>{fmt(convertedEurPreview)}</strong> in Euro
+                  ≈{' '}
+                  <strong style={{ color: '#c9d1d9' }}>{formatMoneyAmount(convertedBasePreview, baseCurrency)}</strong>{' '}
+                  in {moneyCurrencyLabel(baseCurrency)}
                   {fxRateDate ? ` · EZB-Kurs vom ${fxRateDate}` : ''}
                 </>
               )}
-              {!fxLoading && !fxError && convertedEurPreview == null && String(form.amount).trim() && (
-                <>Betrag eingeben — wird automatisch in Euro umgerechnet.</>
+              {!fxLoading && !fxError && convertedBasePreview == null && String(form.amount).trim() && (
+                <>Betrag eingeben — wird automatisch in {moneyCurrencyLabel(baseCurrency)} umgerechnet.</>
               )}
             </div>
           )}
@@ -6627,7 +6700,7 @@ export default function AllWin() {
             <input
               style={S.input}
               inputMode="decimal"
-              placeholder="Gesamtbetrag / Schuldenhöhe (€)"
+              placeholder={`Gesamtbetrag / Schuldenhöhe (${moneyCurrencySymbol(baseCurrency)})`}
               value={newDebtTotal}
               onChange={(e) => setNewDebtTotal(e.target.value)}
             />
@@ -6641,7 +6714,7 @@ export default function AllWin() {
             <input
               style={S.input}
               inputMode="decimal"
-              placeholder="Monatliche Rate (€)"
+              placeholder={`Monatliche Rate (${moneyCurrencySymbol(baseCurrency)})`}
               value={newDebtMonthly}
               onChange={(e) => setNewDebtMonthly(e.target.value)}
             />
@@ -6650,7 +6723,7 @@ export default function AllWin() {
                 <input
                   style={S.input}
                   inputMode="decimal"
-                  placeholder="Marktwert der Immobilie (€, optional)"
+                  placeholder={`Marktwert der Immobilie (${moneyCurrencySymbol(baseCurrency)}, optional)`}
                   value={newDebtPropertyValue}
                   onChange={(e) => setNewDebtPropertyValue(e.target.value)}
                 />

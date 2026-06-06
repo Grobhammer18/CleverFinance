@@ -499,19 +499,28 @@ export function mountMarketRoutes(app) {
   app.get('/api/fx/rate', async (req, res) => {
     try {
       const from = String(req.query.from || '').trim().toUpperCase();
+      const to = String(req.query.to || 'EUR').trim().toUpperCase();
       if (!from) return res.status(400).json({ error: 'from erforderlich' });
-      if (from === 'EUR') {
-        return res.json({ from: 'EUR', eurPerUnit: 1, date: new Date().toISOString().slice(0, 10) });
+      if (from === to) {
+        return res.json({
+          from,
+          to,
+          basePerUnit: 1,
+          eurPerUnit: 1,
+          date: new Date().toISOString().slice(0, 10),
+        });
       }
-      const url = `https://api.frankfurter.app/latest?from=${encodeURIComponent(from)}&to=EUR`;
+      const url = `https://api.frankfurter.app/latest?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
       const r = await fetch(url);
       if (!r.ok) throw new Error('frankfurter');
       const data = await r.json();
-      const eurPerUnit = data?.rates?.EUR;
-      if (typeof eurPerUnit !== 'number' || eurPerUnit <= 0) throw new Error('rate');
+      const basePerUnit = data?.rates?.[to];
+      if (typeof basePerUnit !== 'number' || basePerUnit <= 0) throw new Error('rate');
       return res.json({
         from,
-        eurPerUnit,
+        to,
+        basePerUnit,
+        eurPerUnit: to === 'EUR' ? basePerUnit : undefined,
         date: data.date || new Date().toISOString().slice(0, 10),
       });
     } catch (e) {

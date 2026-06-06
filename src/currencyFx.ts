@@ -1,4 +1,4 @@
-/** Grundwährung der App (Money / Home). */
+/** Standard-Grundwährung (Fallback). */
 export const BASE_CURRENCY = 'EUR';
 
 export type MoneyCurrency = {
@@ -33,15 +33,33 @@ export const MONEY_CURRENCIES: MoneyCurrency[] = [
   { code: 'ZAR', label: 'Südafrikanischer Rand', symbol: 'R' },
 ];
 
-const CURRENCY_SYMBOL = new Map(MONEY_CURRENCIES.map((c) => [c.code, c.symbol]));
+const CURRENCY_BY_CODE = new Map(MONEY_CURRENCIES.map((c) => [c.code, c]));
+
+export function normalizeBaseCurrency(code: unknown): string {
+  const c = String(code || '').trim().toUpperCase();
+  return CURRENCY_BY_CODE.has(c) ? c : BASE_CURRENCY;
+}
 
 export function moneyCurrencySymbol(code: string): string {
-  return CURRENCY_SYMBOL.get(code) || code;
+  return CURRENCY_BY_CODE.get(code)?.symbol || code;
+}
+
+export function moneyCurrencyLabel(code: string): string {
+  return CURRENCY_BY_CODE.get(code)?.label || code;
 }
 
 export function moneyCurrencyOptionLabel(code: string): string {
-  const c = MONEY_CURRENCIES.find((x) => x.code === code);
+  const c = CURRENCY_BY_CODE.get(code);
   return c ? `${c.code} (${c.label})` : code;
+}
+
+export function formatMoneyAmount(n: number, currencyCode: string = BASE_CURRENCY): string {
+  const code = normalizeBaseCurrency(currencyCode);
+  try {
+    return new Intl.NumberFormat('de-DE', { style: 'currency', currency: code }).format(n);
+  } catch {
+    return `${n.toLocaleString('de-DE')} ${moneyCurrencySymbol(code)}`;
+  }
 }
 
 export function formatForeignPaidLine(amount: number, currency: string): string {
@@ -53,30 +71,57 @@ export function formatForeignPaidLine(amount: number, currency: string): string 
   return `Gezahlt: ${formatted} ${sym}`;
 }
 
-export type FxRateQuote = { eurPerUnit: number; date: string };
+export type FxRateQuote = { basePerUnit: number; date: string; from: string; to: string };
 
-/** 1 Einheit `from` → EUR (EZB-Tageskurs via Frankfurter). */
-export async function fetchEurRate(from: string, billingApi: string): Promise<FxRateQuote> {
-  const code = String(from || '').trim().toUpperCase();
-  if (!code || code === BASE_CURRENCY) {
-    return { eurPerUnit: 1, date: new Date().toISOString().slice(0, 10) };
+/** 1 Einheit `from` → `to` (EZB-Tageskurs via Frankfurter). */
+export async function fetchFxRate(from: string, to: string, billingApi: string): Promise<FxRateQuote> {
+  const fromCode = normalizeBaseCurrency(from);
+  const toCode = normalizeBaseCurrency(to);
+  if (fromCode === toCode) {
+    return { from: fromCode, to: toCode, basePerUnit: 1, date: new Date().toISOString().slice(0, 10) };
   }
+  const q = `from=${encodeURIComponent(fromCode)}&to=${encodeURIComponent(toCode)}`;
   const viaApi = billingApi
-    ? `${billingApi.replace(/\/$/, '')}/api/fx/rate?from=${encodeURIComponent(code)}`
-    : `https://api.frankfurter.app/latest?from=${encodeURIComponent(code)}&to=${BASE_CURRENCY}`;
+    ? `${billingApi.replace(/\/$/, '')}/api/fx/rate?${q}`
+    : `https://api.frankfurter.app/latest?${q}`;
   const res = await fetch(viaApi);
   if (!res.ok) throw new Error('fx-unavailable');
-  const data = (await res.json()) as { eurPerUnit?: number; rates?: { EUR?: number }; date?: string };
-  const eurPerUnit =
-    typeof data.eurPerUnit === 'number' && data.eurPerUnit > 0
-      ? data.eurPerUnit
-      : typeof data.rates?.EUR === 'number' && data.rates.EUR > 0
-        ? data.rates.EUR
-        : NaN;
-  if (!Number.isFinite(eurPerUnit) || eurPerUnit <= 0) throw new Error('fx-parse');
-  return { eurPerUnit, date: typeof data.date === 'string' ? data.date : new Date().toISOString().slice(0, 10) };
+  const data = (await res.json()) as {
+    basePerUnit?: number;
+    eurPerUnit?: number;
+    rates?: Record<string, number>;
+    date?: string;
+    to?: string;
+  };
+  const target = data.to || toCode;
+  const basePerUnit =
+    typeof data.basePerUnit === 'number' && data.basePerUnit > 0
+      ? data.basePerUnit
+      : typeof data.eurPerUnit === 'number' && data.eurPerUnit > 0
+        ? data.eurPerUnit
+        : typeof data.rates?.[target] === 'number' && data.rates[target] > 0
+          ? data.rates[target]
+          : NaN;
+  if (!Number.isFinite(basePerUnit) || basePerUnit <= 0) throw new Error('fx-parse');
+  return {
+    from: fromCode,
+    to: toCode,
+    basePerUnit,
+    date: typeof data.date === 'string' ? data.date : new Date().toISOString().slice(0, 10),
+  };
 }
 
+/** @deprecated Alias — nutzt fetchFxRate mit Ziel EUR. */
+export async function fetchEurRate(from: string, billingApi: string): Promise<{ eurPerUnit: number; date: string }> {
+  const q = await fetchFxRate(from, BASE_CURRENCY, billingApi);
+  return { eurPerUnit: q.basePerUnit, date: q.date };
+}
+
+export function convertForeignToBase(foreignAmount: number, basePerUnit: number): number {
+  return Math.round(foreignAmount * basePerUnit * 100) / 100;
+}
+
+/** @deprecated Alias */
 export function convertForeignToEur(foreignAmount: number, eurPerUnit: number): number {
-  return Math.round(foreignAmount * eurPerUnit * 100) / 100;
+  return convertForeignToBase(foreignAmount, eurPerUnit);
 }
