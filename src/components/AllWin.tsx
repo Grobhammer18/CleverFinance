@@ -28,6 +28,7 @@ import { fetchInstrumentResolve, fetchMarketHistory, fetchMarketQuotes, type Mar
 import { instrumentDisplayLines, isIsinCode, normalizeIsin } from '../instrumentDisplay';
 import { stockLogoUrlCandidates } from '../stockLogos';
 import {
+  bookingCurrency,
   convertForeignToBase,
   fetchFxRate,
   formatForeignPaidLine,
@@ -37,6 +38,7 @@ import {
   moneyCurrencyOptionLabel,
   moneyCurrencySymbol,
   normalizeBaseCurrency,
+  pickVacationCurrency,
 } from '../currencyFx';
 import { getOverviewDemoSnapshot, OVERVIEW_DEMO_HINT } from '../demo/overviewDemoSample';
 import {
@@ -587,6 +589,8 @@ type UserStateCache = {
   portfolioBrokerCash?: number;
   levelUpMode?: LevelUpMode;
   baseCurrency?: string;
+  vacationMode?: boolean;
+  vacationCurrency?: string;
   savedAt?: number;
 };
 
@@ -1535,6 +1539,10 @@ export default function AllWin() {
   const _bootCache = readInitialUserCache();
   const _bootBaseCurrency = normalizeBaseCurrency(_bootCache?.baseCurrency);
   const [baseCurrency, setBaseCurrency] = useState(_bootBaseCurrency);
+  const [vacationMode, setVacationMode] = useState(() => _bootCache?.vacationMode === true);
+  const [vacationCurrency, setVacationCurrency] = useState(() =>
+    pickVacationCurrency(_bootBaseCurrency, _bootCache?.vacationCurrency),
+  );
   const [debts, setDebts] = useState<Debt[]>(() =>
     Array.isArray(_bootCache?.debts)
       ? _bootCache.debts.map((d) => ({ ...d, kind: d.kind === 'house' ? 'house' : 'consumer' }))
@@ -1557,7 +1565,7 @@ export default function AllWin() {
   const [form, setForm] = useState<FormState>({
     type: 'ausgabe',
     amount: '',
-    currency: _bootBaseCurrency,
+    currency: bookingCurrency(_bootBaseCurrency, _bootCache?.vacationMode === true, _bootCache?.vacationCurrency),
     category: CATS.ausgaben[0],
     note: '',
     date: todayIsoDate(),
@@ -1777,6 +1785,10 @@ export default function AllWin() {
           const bc = normalizeBaseCurrency(cached.baseCurrency);
           setBaseCurrency(bc);
         }
+        if (cached.vacationMode === true) setVacationMode(true);
+        if (cached.vacationCurrency) {
+          setVacationCurrency(pickVacationCurrency(cached.baseCurrency ?? _bootBaseCurrency, cached.vacationCurrency));
+        }
       });
     }
   }, [authUser?.id, authUser?.email, authToken]);
@@ -1908,6 +1920,10 @@ export default function AllWin() {
     return convertForeignToBase(raw, fxBasePerUnit);
   }, [form.amount, form.currency, baseCurrency, fxBasePerUnit]);
   const fmtMoney = useCallback((n: number) => formatMoneyAmount(n, baseCurrency), [baseCurrency]);
+  const defaultFormCurrency = useCallback(
+    () => bookingCurrency(baseCurrency, vacationMode, vacationCurrency),
+    [baseCurrency, vacationMode, vacationCurrency],
+  );
   const chartFixedPie = useMemo(
     () =>
       fixedCostOverviewRows
@@ -2329,10 +2345,17 @@ export default function AllWin() {
         const loadedBaseCurrency = normalizeBaseCurrency(
           (state as { baseCurrency?: unknown }).baseCurrency ?? cached?.baseCurrency,
         );
+        const loadedVacationMode = (state as { vacationMode?: unknown }).vacationMode === true || cached?.vacationMode === true;
+        const loadedVacationCurrency = pickVacationCurrency(
+          loadedBaseCurrency,
+          (state as { vacationCurrency?: unknown }).vacationCurrency ?? cached?.vacationCurrency,
+        );
         flushSync(() => {
           setOnboardingV2(v2);
           setLevelUpMode(resolvedMode);
           setBaseCurrency(loadedBaseCurrency);
+          setVacationMode(loadedVacationMode);
+          setVacationCurrency(loadedVacationCurrency);
           setDebts(
             debtsToApply.map((d) => ({
               ...d,
@@ -2355,6 +2378,8 @@ export default function AllWin() {
           portfolioBrokerCash: brokerCash,
           levelUpMode: resolvedMode,
           baseCurrency: loadedBaseCurrency,
+          vacationMode: loadedVacationMode,
+          vacationCurrency: loadedVacationCurrency,
         });
         const recoveredFromCache =
           cachedTx.length > cloudTx.length ||
@@ -2395,6 +2420,8 @@ export default function AllWin() {
       const ngT = override?.notgroschenTarget ?? notgroschenTarget;
       const broker = override?.portfolioBrokerCash ?? portfolioBrokerCash;
       const baseCur = normalizeBaseCurrency(override?.baseCurrency ?? baseCurrency);
+      const vacMode = override?.vacationMode ?? vacationMode;
+      const vacCur = pickVacationCurrency(baseCur, override?.vacationCurrency ?? vacationCurrency);
       writeUserStateCache(authUser.id, {
         transactions: txList,
         debts: debtList,
@@ -2403,6 +2430,8 @@ export default function AllWin() {
         portfolioBrokerCash: broker,
         levelUpMode,
         baseCurrency: baseCur,
+        vacationMode: vacMode,
+        vacationCurrency: vacCur,
       });
       const hasMoneyData = txList.length > 0 || debtList.length > 0;
       if (!cloudPersistReadyRef.current && !hasMoneyData && !options?.replaceTransactions && !options?.replaceDebts) {
@@ -2422,6 +2451,8 @@ export default function AllWin() {
         portfolioExcludedBaseSyms,
         dailyVermogenSnapshots,
         baseCurrency: baseCur,
+        vacationMode: vacMode,
+        vacationCurrency: vacCur,
       };
       const canCloudPersist = cloudPersistReadyRef.current;
       const clientSavedAt = Date.now();
@@ -2523,27 +2554,69 @@ export default function AllWin() {
       onboardingV2,
       levelUpMode,
       baseCurrency,
+      vacationMode,
+      vacationCurrency,
     ],
+  );
+
+  const persistMoneyPrefs = useCallback(
+    (patch: Pick<UserStateCache, 'baseCurrency' | 'vacationMode' | 'vacationCurrency'>) => {
+      if (authUser?.id) {
+        writeUserStateCache(authUser.id, patch);
+        void persistUserState(patch, { background: true });
+      }
+    },
+    [authUser?.id, persistUserState],
   );
 
   const applyBaseCurrency = useCallback(
     (code: string) => {
       const next = normalizeBaseCurrency(code);
       setBaseCurrency(next);
-      setForm((f) => (editingTxId == null ? { ...f, currency: next } : f));
-      if (authUser?.id) {
-        writeUserStateCache(authUser.id, { baseCurrency: next });
-        void persistUserState({ baseCurrency: next }, { background: true });
+      let nextVacationCurrency = vacationCurrency;
+      if (normalizeBaseCurrency(vacationCurrency) === next) {
+        nextVacationCurrency = pickVacationCurrency(next);
+        setVacationCurrency(nextVacationCurrency);
       }
+      const formCur = bookingCurrency(next, vacationMode, nextVacationCurrency);
+      setForm((f) => (editingTxId == null ? { ...f, currency: formCur } : f));
+      persistMoneyPrefs({
+        baseCurrency: next,
+        vacationCurrency: nextVacationCurrency,
+        vacationMode,
+      });
     },
-    [authUser?.id, editingTxId, persistUserState],
+    [editingTxId, vacationCurrency, vacationMode, persistMoneyPrefs],
+  );
+
+  const applyVacationMode = useCallback(
+    (on: boolean) => {
+      setVacationMode(on);
+      const vacCur = pickVacationCurrency(baseCurrency, vacationCurrency);
+      if (on) setVacationCurrency(vacCur);
+      const formCur = bookingCurrency(baseCurrency, on, vacCur);
+      if (editingTxId == null) setForm((f) => ({ ...f, currency: formCur }));
+      persistMoneyPrefs({ vacationMode: on, vacationCurrency: vacCur, baseCurrency });
+    },
+    [baseCurrency, vacationCurrency, editingTxId, persistMoneyPrefs],
+  );
+
+  const applyVacationCurrency = useCallback(
+    (code: string) => {
+      const next = pickVacationCurrency(baseCurrency, code);
+      setVacationCurrency(next);
+      if (vacationMode && editingTxId == null) setForm((f) => ({ ...f, currency: next }));
+      persistMoneyPrefs({ vacationCurrency: next, vacationMode, baseCurrency });
+    },
+    [baseCurrency, vacationMode, editingTxId, persistMoneyPrefs],
   );
 
   useEffect(() => {
     if (moneyFormOpen && editingTxId == null) {
-      setForm((f) => (f.currency === baseCurrency ? f : { ...f, currency: baseCurrency }));
+      const target = defaultFormCurrency();
+      setForm((f) => (f.currency === target ? f : { ...f, currency: target }));
     }
-  }, [moneyFormOpen, editingTxId, baseCurrency]);
+  }, [moneyFormOpen, editingTxId, defaultFormCurrency]);
 
   useEffect(() => {
     if (!authUser?.id) return;
@@ -2555,8 +2628,10 @@ export default function AllWin() {
       portfolioBrokerCash,
       levelUpMode,
       baseCurrency,
+      vacationMode,
+      vacationCurrency,
     });
-  }, [authUser?.id, transactions, debts, notgroschenBalance, notgroschenTarget, portfolioBrokerCash, levelUpMode, baseCurrency]);
+  }, [authUser?.id, transactions, debts, notgroschenBalance, notgroschenTarget, portfolioBrokerCash, levelUpMode, baseCurrency, vacationMode, vacationCurrency]);
 
   useEffect(() => {
     if (!authToken || !authUser?.id) return;
@@ -3488,7 +3563,7 @@ export default function AllWin() {
     setForm({
       type: 'ausgabe',
       amount: '',
-      currency: baseCurrency,
+      currency: bookingCurrency(baseCurrency, vacationMode, vacationCurrency),
       category: CATS.ausgaben[0],
       note: '',
       date: todayIsoDate(),
@@ -5722,6 +5797,55 @@ export default function AllWin() {
                 <div style={{ fontSize: 10, color: '#7d8590', padding: '0 12px 8px', lineHeight: 1.45 }}>
                   Standard in „Neue Buchung“ — Fremdwährungen werden hierhin umgerechnet.
                 </div>
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={vacationMode}
+                  onClick={() => applyVacationMode(!vacationMode)}
+                  style={{
+                    display: 'block',
+                    width: 'calc(100% - 16px)',
+                    margin: '4px 8px 8px',
+                    textAlign: 'left',
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: `1px solid ${vacationMode ? '#2563eb' : awBg.line}`,
+                    background: vacationMode ? '#2563eb22' : awBg.hole,
+                    color: vacationMode ? '#93c5fd' : '#e6edf3',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  🏖️ Im Urlaub? {vacationMode ? '✅' : ''}
+                </button>
+                {vacationMode && (
+                  <>
+                    <div style={{ fontSize: 11, color: '#7d8590', padding: '0 12px 6px', fontWeight: 600 }}>
+                      Urlaubswährung in „Neue Buchung“
+                    </div>
+                    <select
+                      value={vacationCurrency}
+                      onChange={(e) => applyVacationCurrency(e.target.value)}
+                      style={{
+                        ...S.select,
+                        margin: '0 8px 8px',
+                        width: 'calc(100% - 16px)',
+                        fontSize: 12,
+                      }}
+                      aria-label="Urlaubswährung"
+                    >
+                      {MONEY_CURRENCIES.filter((c) => c.code !== baseCurrency).map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {moneyCurrencyOptionLabel(c.code)}
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: 10, color: '#7d8590', padding: '0 12px 10px', lineHeight: 1.45 }}>
+                      Betrag vor Ort eingeben — Umrechnung in {moneyCurrencyLabel(baseCurrency)} wie gewohnt.
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}

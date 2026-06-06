@@ -53,6 +53,27 @@ export function moneyCurrencyOptionLabel(code: string): string {
   return c ? `${c.code} (${c.label})` : code;
 }
 
+export function bookingCurrency(
+  baseCurrency: string,
+  vacationMode: boolean,
+  vacationCurrency: string | undefined,
+): string {
+  const base = normalizeBaseCurrency(baseCurrency);
+  if (!vacationMode) return base;
+  const vac = pickVacationCurrency(base, vacationCurrency);
+  return vac === base ? pickVacationCurrency(base) : vac;
+}
+
+/** Urlaubswährung — muss von der Grundwährung abweichen. */
+export function pickVacationCurrency(baseCurrency: string, preferred?: unknown): string {
+  const base = normalizeBaseCurrency(baseCurrency);
+  const pref = preferred ? normalizeBaseCurrency(preferred) : '';
+  if (pref && pref !== base) return pref;
+  const usd = 'USD';
+  if (base !== usd) return usd;
+  return MONEY_CURRENCIES.find((c) => c.code !== base)?.code ?? usd;
+}
+
 export function formatMoneyAmount(n: number, currencyCode: string = BASE_CURRENCY): string {
   const code = normalizeBaseCurrency(currencyCode);
   try {
