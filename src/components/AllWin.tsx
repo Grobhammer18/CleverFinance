@@ -647,7 +647,7 @@ function markTxDeleted(userId: string | undefined, id: number) {
   writeDeletedTxIds(userId, next);
 }
 
-/** Nach erfolgreichem Cloud-GET: nur Server-Liste (auch leer), kein Cache-Merge. */
+/** Cloud-Transaktionen normalisieren (Sortierung); Merge mit Cache in loadUserState / pullMoneyFromCloud. */
 function transactionsFromCloud(cloud: Transaction[]): Transaction[] {
   return [...cloud].sort(compareTxByDateDesc);
 }
@@ -2140,15 +2140,26 @@ export default function AllWin() {
         const cached = readUserStateCache(authUser.id);
         const cloudTx = Array.isArray(state.transactions) ? (state.transactions as Transaction[]) : [];
         const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : transactions;
-        const transactionsToApply = Array.isArray(state.transactions)
-          ? transactionsFromCloud(cloudTx)
-          : mergeTransactionsById([], cachedTx, authUser.id);
-        cloudSavedAtRef.current = Number((state as { _clientSavedAt?: unknown })._clientSavedAt) || Date.now();
+        const cloudSavedAt = Number((state as { _clientSavedAt?: unknown })._clientSavedAt) || 0;
+        const cacheSavedAt = typeof cached?.savedAt === 'number' ? cached.savedAt : 0;
+        /** Leere Cloud-Liste darf lokalen Cache nicht überschreiben (Reload / Race nach Speichern). */
+        const cloudTxList =
+          cloudTx.length === 0 && cachedTx.length > 0 && (cloudSavedAt === 0 || cacheSavedAt >= cloudSavedAt)
+            ? []
+            : Array.isArray(state.transactions)
+              ? transactionsFromCloud(cloudTx)
+              : [];
+        const transactionsToApply = mergeTransactionsById(cloudTxList, cachedTx, authUser.id);
+        cloudSavedAtRef.current = Math.max(cloudSavedAt, cacheSavedAt, Date.now());
         const cloudDebts = Array.isArray(state.debts) ? (state.debts as Debt[]) : [];
         const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : debts;
-        const debtsToApply = Array.isArray(state.debts)
-          ? debtsFromCloud(cloudDebts)
-          : mergeDebtsById(cloudDebts, cachedDebts);
+        const cloudDebtList =
+          cloudDebts.length === 0 && cachedDebts.length > 0 && (cloudSavedAt === 0 || cacheSavedAt >= cloudSavedAt)
+            ? []
+            : Array.isArray(state.debts)
+              ? debtsFromCloud(cloudDebts)
+              : [];
+        const debtsToApply = mergeDebtsById(cloudDebtList, cachedDebts);
         let ngBal = notgroschenBalance;
         let ngTarget = notgroschenTarget;
         let brokerCash = portfolioBrokerCash;
@@ -2271,10 +2282,25 @@ export default function AllWin() {
           portfolioBrokerCash: brokerCash,
           levelUpMode: resolvedMode,
         });
+        const recoveredFromCache =
+          cachedTx.length > cloudTx.length ||
+          (cloudTx.length === 0 && transactionsToApply.length > 0);
         cloudOnboardingHydratedRef.current = true;
         window.setTimeout(() => {
           cloudPersistReadyRef.current = true;
           setCloudUserStateReady(true);
+          if (recoveredFromCache && transactionsToApply.length > 0) {
+            void persistUserState(
+              {
+                transactions: transactionsToApply,
+                debts: debtsToApply,
+                notgroschenBalance: ngBal,
+                notgroschenTarget: ngTarget,
+                portfolioBrokerCash: brokerCash,
+              },
+              { replaceTransactions: true, replaceDebts: true },
+            );
+          }
         }, 0);
       } finally {
         setHydrating(false);
@@ -2323,10 +2349,14 @@ export default function AllWin() {
       const canCloudPersist = cloudPersistReadyRef.current;
       const clientSavedAt = Date.now();
       if (canCloudPersist) {
-        statePayload.transactions = txList;
-        statePayload.debts = debtList;
-        statePayload._replaceTransactions = true;
-        statePayload._replaceDebts = true;
+        if (txList.length > 0 || options?.replaceTransactions) {
+          statePayload.transactions = txList;
+          statePayload._replaceTransactions = true;
+        }
+        if (debtList.length > 0 || options?.replaceDebts) {
+          statePayload.debts = debtList;
+          statePayload._replaceDebts = true;
+        }
         statePayload._clientSavedAt = clientSavedAt;
       } else {
         if (debtList.length > 0 || options?.replaceDebts) statePayload.debts = debtList;
