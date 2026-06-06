@@ -1907,6 +1907,7 @@ export default function AllWin() {
     if (Number.isNaN(raw) || raw <= 0 || !Number.isFinite(fxBasePerUnit) || fxBasePerUnit <= 0) return null;
     return convertForeignToBase(raw, fxBasePerUnit);
   }, [form.amount, form.currency, baseCurrency, fxBasePerUnit]);
+  const fmtMoney = useCallback((n: number) => formatMoneyAmount(n, baseCurrency), [baseCurrency]);
   const chartFixedPie = useMemo(
     () =>
       fixedCostOverviewRows
@@ -3670,11 +3671,11 @@ export default function AllWin() {
     }
 
     if (form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen' && amt > workNg + 0.0001) {
-      showToast(`Im Notgroschen sind nur noch ${fmt(workNg)} verfügbar.`, 'error');
+      showToast(`Im Notgroschen sind nur noch ${fmtMoney(workNg)} verfügbar.`, 'error');
       return;
     }
     if (form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot' && amt > workBroker + 0.0001) {
-      showToast(`Im Cash Depot sind nur noch ${fmt(workBroker)} verfügbar.`, 'error');
+      showToast(`Im Cash Depot sind nur noch ${fmtMoney(workBroker)} verfügbar.`, 'error');
       return;
     }
 
@@ -3802,15 +3803,15 @@ export default function AllWin() {
       if (tilgRestAfter === 0) {
         showToast(`🏆 „${linkedDebtName}“ abbezahlt — Boost-Archiv!${ngSuffix}${cdSuffix}${einSuffix}`, 'level');
       } else {
-        showToast(`✅ Tilgung ${fmt(amt)} für „${linkedDebtName}“ — Rest ${fmt(tilgRestAfter)}${ngSuffix}${cdSuffix}${einSuffix}`);
+        showToast(`✅ Tilgung ${fmtMoney(amt)} für „${linkedDebtName}“ — Rest ${fmtMoney(tilgRestAfter)}${ngSuffix}${cdSuffix}${einSuffix}`);
       }
     } else if (form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen' && notgroAfterDebit !== undefined) {
-      showToast(`🛡️ −${fmt(amt)} aus Notgroschen — Stand jetzt ${fmt(notgroAfterDebit)}`);
+      showToast(`🛡️ −${fmtMoney(amt)} aus Notgroschen — Stand jetzt ${fmt(notgroAfterDebit)}`);
     } else if (form.type === 'ausgabe' && form.category === 'Notgroschen' && notgroNewBal !== undefined) {
       const msg =
         form.paymentMethod === 'Cash Depot' && brokerCashAfterSpend !== undefined
-          ? `🛡️ +${fmt(amt)} auf Notgroschen (aus Cash Depot) — NG ${fmt(notgroNewBal)} · Cash ${fmt(brokerCashAfterSpend)}`
-          : `🛡️ +${fmt(amt)} auf Notgroschen — Stand jetzt ${fmt(notgroNewBal)}`;
+          ? `🛡️ +${fmtMoney(amt)} auf Notgroschen (aus Cash Depot) — NG ${fmt(notgroNewBal)} · Cash ${fmt(brokerCashAfterSpend)}`
+          : `🛡️ +${fmtMoney(amt)} auf Notgroschen — Stand jetzt ${fmt(notgroNewBal)}`;
       showToast(msg);
     } else if (
       form.type === 'ausgabe' &&
@@ -3818,12 +3819,12 @@ export default function AllWin() {
       brokerCashAfterSpend !== undefined &&
       !(form.category === 'Notgroschen' && form.paymentMethod === 'Cash Depot')
     ) {
-      showToast(`💎 −${fmt(amt)} aus Cash Depot — Stand jetzt ${fmt(brokerCashAfterSpend)}`);
+      showToast(`💎 −${fmtMoney(amt)} aus Cash Depot — Stand jetzt ${fmt(brokerCashAfterSpend)}`);
     } else if (form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot' && brokerCashAfterEinzahlung !== undefined) {
-      showToast(`💎 +${fmt(amt)} ins Cash Depot eingezahlt — Stand jetzt ${fmt(brokerCashAfterEinzahlung)}`);
+      showToast(`💎 +${fmtMoney(amt)} ins Cash Depot eingezahlt — Stand jetzt ${fmt(brokerCashAfterEinzahlung)}`);
     } else if (form.type === 'einnahme' && form.category === 'Dividende' && brokerCashAfterDividend !== undefined) {
       const net = Math.round((amt - feeEur - taxEur) * 100) / 100;
-      const feeHint = feeEur + taxEur > 0 ? ` (netto ${fmt(net)} nach Gebühr/Steuer)` : '';
+      const feeHint = feeEur + taxEur > 0 ? ` (netto ${fmtMoney(net)} nach Gebühr/Steuer)` : '';
       showToast(`💸 Dividende gebucht${feeHint} — Cash Depot jetzt ${fmt(brokerCashAfterDividend)}`);
     } else {
       let msg = wasEdit
@@ -5153,16 +5154,16 @@ export default function AllWin() {
         <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2 }}>
           {MONTHS[calMonth0]} {reportYear}
         </div>
-        <div style={{ ...S.bigNum, color: saldo >= 0 ? '#2563eb' : '#ff7b7b', marginTop: 6 }}>{fmt(saldo)}</div>
+        <div style={{ ...S.bigNum, color: saldo >= 0 ? '#2563eb' : '#ff7b7b', marginTop: 6 }}>{fmtMoney(saldo)}</div>
         <div style={{ fontSize: 12, color: '#7d8590', marginTop: 4 }}>{saldo >= 0 ? 'Plus im Monat' : 'Minus im Monat'}</div>
         <div style={{ ...S.row, marginTop: 12 }}>
           <div>
             <div style={S.label}>Einnahmen</div>
-            <div style={{ color: '#2563eb', fontWeight: 700 }}>{fmt(moneyThisMonth.einnahmen)}</div>
+            <div style={{ color: '#2563eb', fontWeight: 700 }}>{fmtMoney(moneyThisMonth.einnahmen)}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={S.label}>Ausgaben</div>
-            <div style={{ color: '#ff7b7b', fontWeight: 700 }}>{fmt(moneyThisMonth.ausgaben)}</div>
+            <div style={{ color: '#ff7b7b', fontWeight: 700 }}>{fmtMoney(moneyThisMonth.ausgaben)}</div>
           </div>
         </div>
         <div
@@ -5496,7 +5497,7 @@ export default function AllWin() {
             const cd = tx.debitsCashDepot ? 'LevelUp: Cash −' : tx.creditsCashDepot ? 'LevelUp: Cash +' : '';
             const divFee =
               tx.type === 'einnahme' && tx.category === 'Dividende' && ((tx.feeEur ?? 0) > 0 || (tx.taxEur ?? 0) > 0)
-                ? `netto Cash ${fmt(Math.round((txAmountNum(tx) - (tx.feeEur ?? 0) - (tx.taxEur ?? 0)) * 100) / 100)}`
+                ? `netto Cash ${fmtMoney(Math.round((txAmountNum(tx) - (tx.feeEur ?? 0) - (tx.taxEur ?? 0)) * 100) / 100)}`
                 : '';
             const bits = [boost, ng, cd, divFee, tx.paymentMethod, tx.note].filter(Boolean);
             const sub = bits.join(' · ');
@@ -5507,7 +5508,7 @@ export default function AllWin() {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
         <div style={{ fontWeight: 700, color: tx.type === 'einnahme' ? '#2563eb' : '#ff7b7b' }}>
           {tx.type === 'einnahme' ? '+' : '-'}
-          {fmt(+tx.amount)}
+          {fmtMoney(+tx.amount)}
         </div>
         {tx.foreignCurrency && tx.foreignAmount != null && tx.foreignCurrency !== baseCurrency && (
           <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 500, lineHeight: 1.3, textAlign: 'right' }}>
@@ -6153,7 +6154,7 @@ export default function AllWin() {
             <div style={S.label}>💰 Einnahmen</div>
             {!moneyIncomeOpen && (
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                {incomeOverviewRows.length} Pos. · Summe {fmt(incomeOverviewSum)}
+                {incomeOverviewRows.length} Pos. · Summe {fmtMoney(incomeOverviewSum)}
               </div>
             )}
           </div>
@@ -6180,7 +6181,7 @@ export default function AllWin() {
                       {row.latest.paymentMethod ? ` · ${row.latest.paymentMethod}` : ''}
                     </div>
                   </div>
-                  <div style={{ fontWeight: 800, color: '#2563eb', flexShrink: 0 }}>{fmt(row.sum)}</div>
+                  <div style={{ fontWeight: 800, color: '#2563eb', flexShrink: 0 }}>{fmtMoney(row.sum)}</div>
                 </div>
               ))
             )}
@@ -6199,7 +6200,7 @@ export default function AllWin() {
                 }}
               >
                 <span>Summe (alle Einnahmen)</span>
-                <span style={{ fontWeight: 800, color: '#2563eb' }}>{fmt(incomeOverviewSum)}</span>
+                <span style={{ fontWeight: 800, color: '#2563eb' }}>{fmtMoney(incomeOverviewSum)}</span>
               </div>
             )}
           </>
@@ -6229,7 +6230,7 @@ export default function AllWin() {
             <div style={S.label}>📌 Laufende Fixkosten</div>
             {!moneyFixedCostsOpen && (
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                {fixedCostOverviewRows.length} Pos. · Summe {fmt(fixedCostOverviewSum)}
+                {fixedCostOverviewRows.length} Pos. · Summe {fmtMoney(fixedCostOverviewSum)}
               </div>
             )}
           </div>
@@ -6257,7 +6258,7 @@ export default function AllWin() {
                       {tx.paymentMethod ? ` · ${tx.paymentMethod}` : ''}
                     </div>
                   </div>
-                  <div style={{ fontWeight: 800, color: '#ff7b7b', flexShrink: 0 }}>{fmt(+tx.amount)}</div>
+                  <div style={{ fontWeight: 800, color: '#ff7b7b', flexShrink: 0 }}>{fmtMoney(+tx.amount)}</div>
                 </div>
               ))
             )}
@@ -6276,7 +6277,7 @@ export default function AllWin() {
                 }}
               >
                 <span>Summe (letzte Beträge je Position)</span>
-                <span style={{ fontWeight: 800, color: '#e6edf3' }}>{fmt(fixedCostOverviewSum)}</span>
+                <span style={{ fontWeight: 800, color: '#e6edf3' }}>{fmtMoney(fixedCostOverviewSum)}</span>
               </div>
             )}
           </>
@@ -6306,7 +6307,7 @@ export default function AllWin() {
             <div style={S.label}>📎 Variable Kosten</div>
             {!moneyVarCostsOpen && (
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                {variableCostOverviewRows.length} Pos. · Summe {fmt(variableCostOverviewSum)}
+                {variableCostOverviewRows.length} Pos. · Summe {fmtMoney(variableCostOverviewSum)}
               </div>
             )}
           </div>
@@ -6332,7 +6333,7 @@ export default function AllWin() {
                       {tx.paymentMethod ? ` · ${tx.paymentMethod}` : ''}
                     </div>
                   </div>
-                  <div style={{ fontWeight: 800, color: '#ff7b7b', flexShrink: 0 }}>{fmt(+tx.amount)}</div>
+                  <div style={{ fontWeight: 800, color: '#ff7b7b', flexShrink: 0 }}>{fmtMoney(+tx.amount)}</div>
                 </div>
               ))
             )}
@@ -6351,7 +6352,7 @@ export default function AllWin() {
                 }}
               >
                 <span>Summe (letzte Beträge je Position)</span>
-                <span style={{ fontWeight: 800, color: '#e6edf3' }}>{fmt(variableCostOverviewSum)}</span>
+                <span style={{ fontWeight: 800, color: '#e6edf3' }}>{fmtMoney(variableCostOverviewSum)}</span>
               </div>
             )}
           </>
@@ -7956,7 +7957,7 @@ export default function AllWin() {
             </div>
             <div style={{ fontSize: 14, fontWeight: 700, color: saldo >= 0 ? '#2563eb' : '#ff7b7b' }}>
               {saldo >= 0 ? '+' : ''}
-              {fmt(saldo)}
+              {fmtMoney(saldo)}
             </div>
             <button style={{ ...S.chip(false), marginTop: 8 }} onClick={logout}>
               👋 Logout
