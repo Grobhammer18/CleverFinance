@@ -5853,13 +5853,38 @@ export default function AllWin() {
               </div>
             </>
           )}
-          <label style={{ fontSize: 11, color: '#7d8590', fontWeight: 600 }}>Datum</label>
-          <input
-            style={S.input}
-            type="date"
-            value={form.date}
-            onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-          />
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              width: '100%',
+              background: awBg.field,
+              border: `1px solid ${awBg.line}`,
+              borderRadius: 10,
+              padding: '6px 14px',
+              boxSizing: 'border-box',
+            }}
+          >
+            <span style={{ fontSize: 13, color: '#8b949e', flexShrink: 0 }}>📅 Datum</span>
+            <input
+              type="date"
+              aria-label="Datum"
+              value={form.date}
+              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                border: 'none',
+                background: 'transparent',
+                color: '#e6edf3',
+                fontSize: 14,
+                outline: 'none',
+                colorScheme: 'dark',
+                textAlign: 'right',
+              }}
+            />
+          </div>
           <select
             style={S.select}
             value={form.category}
