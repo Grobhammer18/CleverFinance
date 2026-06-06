@@ -629,9 +629,14 @@ function mergeTransactionsById(cloud: Transaction[], cached: Transaction[], user
   if (userId) writeDeletedTxIds(userId, deleted);
 
   const byId = new Map<number, Transaction>();
-  for (const t of cloud) byId.set(t.id, t);
+  for (const t of cloud) {
+    if (!deleted.has(t.id)) byId.set(t.id, t);
+  }
   for (const t of cached) {
-    if (byId.has(t.id) || deleted.has(t.id)) continue;
+    if (deleted.has(t.id)) {
+      byId.delete(t.id);
+      continue;
+    }
     byId.set(t.id, t);
   }
   return [...byId.values()].sort(compareTxByDateDesc);
@@ -2269,17 +2274,21 @@ export default function AllWin() {
         dailyVermogenSnapshots,
       };
       const canCloudPersist = cloudPersistReadyRef.current;
+      const clientSavedAt = Date.now();
       if (canCloudPersist) {
         statePayload.transactions = txList;
         statePayload.debts = debtList;
         statePayload._replaceTransactions = true;
         statePayload._replaceDebts = true;
-        statePayload._clientSavedAt = Date.now();
+        statePayload._clientSavedAt = clientSavedAt;
       } else {
         if (debtList.length > 0 || options?.replaceDebts) statePayload.debts = debtList;
         if (txList.length > 0 || options?.replaceTransactions) statePayload.transactions = txList;
         if (options?.replaceTransactions) statePayload._replaceTransactions = true;
         if (options?.replaceDebts) statePayload._replaceDebts = true;
+        if (options?.replaceTransactions || options?.replaceDebts || txList.length > 0 || debtList.length > 0) {
+          statePayload._clientSavedAt = clientSavedAt;
+        }
       }
       statePayload.levelUpMode = levelUpMode;
       if (cloudOnboardingHydratedRef.current) {
@@ -2464,16 +2473,21 @@ export default function AllWin() {
         });
         if (!res.ok) return;
         const state = (await res.json())?.state || {};
+        const cloudSavedAt = Number((state as { _clientSavedAt?: unknown })._clientSavedAt) || 0;
+        const cached = readUserStateCache(authUser.id);
+        const cacheSavedAt = typeof cached?.savedAt === 'number' ? cached.savedAt : 0;
+        /** Lokale Änderungen nicht mit älterem Cloud-Stand überschreiben (z. B. nach Speichern / Tab-Wechsel). */
+        if (cloudSavedAt < cacheSavedAt) return;
+        if (cloudSavedAt > 0 && cloudSavedAt <= cloudSavedAtRef.current && cacheSavedAt <= cloudSavedAtRef.current) {
+          return;
+        }
         const cloudTx = Array.isArray(state.transactions) ? (state.transactions as Transaction[]) : [];
         const cloudDebts = Array.isArray(state.debts) ? (state.debts as Debt[]) : [];
-        const cached = readUserStateCache(authUser.id);
         const cachedTx = Array.isArray(cached?.transactions) ? cached.transactions : [];
         const cachedDebts = Array.isArray(cached?.debts) ? cached.debts : [];
-        const mergedTx = Array.isArray(state.transactions)
-          ? transactionsFromCloud(cloudTx)
-          : mergeTransactionsById(cloudTx, cachedTx, authUser.id);
-        cloudSavedAtRef.current = Number((state as { _clientSavedAt?: unknown })._clientSavedAt) || Date.now();
-        const mergedDebts = Array.isArray(state.debts) ? debtsFromCloud(cloudDebts) : mergeDebtsById(cloudDebts, cachedDebts);
+        const mergedTx = mergeTransactionsById(transactionsFromCloud(cloudTx), cachedTx, authUser.id);
+        cloudSavedAtRef.current = Math.max(cloudSavedAtRef.current, cloudSavedAt, Date.now());
+        const mergedDebts = mergeDebtsById(debtsFromCloud(cloudDebts), cachedDebts);
         flushSync(() => {
           setTx(mergedTx);
           setDebts(mergedDebts);
@@ -3418,7 +3432,7 @@ export default function AllWin() {
       feeStr: typeof tx.feeEur === 'number' && tx.feeEur > 0 ? String(tx.feeEur).replace('.', ',') : '',
       taxStr: typeof tx.taxEur === 'number' && tx.taxEur > 0 ? String(tx.taxEur).replace('.', ',') : '',
     });
-    showToast('Buchung zum Bearbeiten geladen — unten anpassen und speichern.', 'success');
+    showToast('Buchung geladen — unten anpassen und speichern.', 'success');
   };
 
   const addTx = () => {
@@ -3558,12 +3572,19 @@ export default function AllWin() {
       if (nextBroker !== portfolioBrokerCash) setPortfolioBrokerCash(nextBroker);
     });
     clearPendingCloudPersist();
-    void persistUserState({
-      transactions: nextTransactions,
-      debts: nextDebts,
-      notgroschenBalance: nextNg,
-      notgroschenTarget: notgroschenTarget,
-      portfolioBrokerCash: nextBroker,
+    void persistUserState(
+      {
+        transactions: nextTransactions,
+        debts: nextDebts,
+        notgroschenBalance: nextNg,
+        notgroschenTarget: notgroschenTarget,
+        portfolioBrokerCash: nextBroker,
+      },
+      { replaceTransactions: true, replaceDebts: true },
+    ).then((ok) => {
+      if (!ok && authToken) {
+        showToast('Lokal gespeichert — Cloud-Sync fehlgeschlagen. Bitte kurz warten und erneut speichern.', 'error');
+      }
     });
     const wasEdit = editingTxId != null;
     resetMoneyForm();
@@ -4189,18 +4210,20 @@ export default function AllWin() {
       top: 'max(12px, env(safe-area-inset-top, 0px))',
       left: '50%',
       transform: 'translateX(-50%)',
-      width: 'calc(100% - 24px)',
-      maxWidth: 400,
+      width: 'min(400px, calc(100vw - 24px))',
+      maxWidth: 'calc(100vw - 24px)',
+      boxSizing: 'border-box' as const,
       background: type === 'level' ? '#1f6feb' : type === 'error' ? '#cf222e' : '#2563eb',
       color: type === 'level' ? '#fff' : type === 'error' ? '#fff' : '#f0f7ff',
       padding: '12px 16px',
-      borderRadius: type === 'error' ? 14 : 99,
+      borderRadius: type === 'error' ? 14 : 12,
       fontWeight: 700,
       fontSize: 13,
-      lineHeight: 1.4,
+      lineHeight: 1.45,
       zIndex: 999,
       boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-      whiteSpace: type === 'error' ? ('normal' as const) : ('nowrap' as const),
+      whiteSpace: 'normal' as const,
+      overflowWrap: 'anywhere' as const,
       textAlign: 'center' as const,
     }),
     tabBar: {
