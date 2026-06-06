@@ -495,4 +495,28 @@ export function mountMarketRoutes(app) {
       return res.status(400).json({ error: e.message || 'Instrument konnte nicht aufgelöst werden.' });
     }
   });
+
+  app.get('/api/fx/rate', async (req, res) => {
+    try {
+      const from = String(req.query.from || '').trim().toUpperCase();
+      if (!from) return res.status(400).json({ error: 'from erforderlich' });
+      if (from === 'EUR') {
+        return res.json({ from: 'EUR', eurPerUnit: 1, date: new Date().toISOString().slice(0, 10) });
+      }
+      const url = `https://api.frankfurter.app/latest?from=${encodeURIComponent(from)}&to=EUR`;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('frankfurter');
+      const data = await r.json();
+      const eurPerUnit = data?.rates?.EUR;
+      if (typeof eurPerUnit !== 'number' || eurPerUnit <= 0) throw new Error('rate');
+      return res.json({
+        from,
+        eurPerUnit,
+        date: data.date || new Date().toISOString().slice(0, 10),
+      });
+    } catch (e) {
+      console.error('[fx] rate:', e.message);
+      return res.status(502).json({ error: 'Wechselkurs vorübergehend nicht verfügbar.' });
+    }
+  });
 }

@@ -27,6 +27,13 @@ import { marketHistoryRange, sparkPricesFromHistory, type MarketDailyPrice } fro
 import { fetchInstrumentResolve, fetchMarketHistory, fetchMarketQuotes, type MarketInstrumentKind } from '../marketApi';
 import { instrumentDisplayLines, isIsinCode, normalizeIsin } from '../instrumentDisplay';
 import { stockLogoUrlCandidates } from '../stockLogos';
+import {
+  BASE_CURRENCY,
+  convertForeignToEur,
+  fetchEurRate,
+  formatForeignPaidLine,
+  MONEY_CURRENCIES,
+} from '../currencyFx';
 import { getOverviewDemoSnapshot, OVERVIEW_DEMO_HINT } from '../demo/overviewDemoSample';
 import {
   PORTFOLIO_POWER_MILESTONE_EURS,
@@ -223,6 +230,11 @@ type Transaction = {
   /** Optional: Gebühr/Steuer (z. B. Dividende brutto im Betrag, netto ins Cash Depot) */
   feeEur?: number;
   taxEur?: number;
+  /** Bar/Reise: gezahlter Betrag in Fremdwährung (amount = EUR-Umrechnung) */
+  foreignAmount?: number;
+  foreignCurrency?: string;
+  /** 1 Einheit foreignCurrency → EUR zum Buchungszeitpunkt */
+  fxRateToEur?: number;
 };
 
 type MonthBucket = { einnahmen: number; ausgaben: number };
@@ -550,6 +562,8 @@ async function compressReceiptImageFile(file: File): Promise<{ base64: string; m
 type FormState = {
   type: 'einnahme' | 'ausgabe';
   amount: string;
+  /** ISO-Währungscode; EUR = Betrag direkt in Euro */
+  currency: string;
   category: string;
   note: string;
   date: string;
@@ -1536,6 +1550,7 @@ export default function AllWin() {
   const [form, setForm] = useState<FormState>({
     type: 'ausgabe',
     amount: '',
+    currency: BASE_CURRENCY,
     category: CATS.ausgaben[0],
     note: '',
     date: todayIsoDate(),
@@ -1841,6 +1856,46 @@ export default function AllWin() {
       ),
     [transactions, form.type, form.category, form.note],
   );
+  const [fxEurPerUnit, setFxEurPerUnit] = useState<number>(1);
+  const [fxRateDate, setFxRateDate] = useState('');
+  const [fxLoading, setFxLoading] = useState(false);
+  const [fxError, setFxError] = useState('');
+  useEffect(() => {
+    if (form.currency === BASE_CURRENCY) {
+      setFxEurPerUnit(1);
+      setFxRateDate('');
+      setFxError('');
+      setFxLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setFxLoading(true);
+    setFxError('');
+    void fetchEurRate(form.currency, BILLING_API)
+      .then((q) => {
+        if (cancelled) return;
+        setFxEurPerUnit(q.eurPerUnit);
+        setFxRateDate(q.date);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFxError('Wechselkurs gerade nicht verfügbar.');
+          setFxEurPerUnit(NaN);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setFxLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.currency, BILLING_API]);
+  const convertedEurPreview = useMemo(() => {
+    if (form.currency === BASE_CURRENCY) return null;
+    const raw = parseFloat(String(form.amount).replace(/\s/g, '').replace(',', '.'));
+    if (Number.isNaN(raw) || raw <= 0 || !Number.isFinite(fxEurPerUnit) || fxEurPerUnit <= 0) return null;
+    return convertForeignToEur(raw, fxEurPerUnit);
+  }, [form.amount, form.currency, fxEurPerUnit]);
   const chartFixedPie = useMemo(
     () =>
       fixedCostOverviewRows
@@ -3392,6 +3447,7 @@ export default function AllWin() {
     setForm({
       type: 'ausgabe',
       amount: '',
+      currency: BASE_CURRENCY,
       category: CATS.ausgaben[0],
       note: '',
       date: todayIsoDate(),
@@ -3502,7 +3558,12 @@ export default function AllWin() {
     setMoneyFormOpen(true);
     setForm({
       type: tx.type,
-      amount: String(tx.amount).replace('.', ','),
+      amount:
+        tx.foreignAmount != null && tx.foreignCurrency && tx.foreignCurrency !== BASE_CURRENCY
+          ? String(tx.foreignAmount).replace('.', ',')
+          : String(tx.amount).replace('.', ','),
+      currency:
+        tx.foreignCurrency && tx.foreignCurrency !== BASE_CURRENCY ? tx.foreignCurrency : BASE_CURRENCY,
       category: tx.category,
       note: tx.note || '',
       date: txDateToInputValue(tx.date),
@@ -3517,7 +3578,25 @@ export default function AllWin() {
   const addTx = () => {
     const rawAmt = parseFloat(String(form.amount).replace(/\s/g, '').replace(',', '.'));
     if (!String(form.amount).trim() || Number.isNaN(rawAmt) || rawAmt <= 0) return;
-    const amt = Math.round(rawAmt * 100) / 100;
+
+    let amt: number;
+    let foreignAmount: number | undefined;
+    let foreignCurrency: string | undefined;
+    let fxRateToEur: number | undefined;
+
+    if (form.currency !== BASE_CURRENCY) {
+      if (!Number.isFinite(fxEurPerUnit) || fxEurPerUnit <= 0) {
+        showToast(fxError || 'Wechselkurs noch nicht geladen — bitte kurz warten.', 'error');
+        return;
+      }
+      foreignAmount = Math.round(rawAmt * 100) / 100;
+      foreignCurrency = form.currency;
+      fxRateToEur = fxEurPerUnit;
+      amt = convertForeignToEur(rawAmt, fxEurPerUnit);
+    } else {
+      amt = Math.round(rawAmt * 100) / 100;
+    }
+
     const feeEur = parseEuroInput(form.feeStr);
     const taxEur = parseEuroInput(form.taxStr);
     if (form.type === 'einnahme' && form.category === 'Dividende' && amt - feeEur - taxEur < -0.001) {
@@ -3613,7 +3692,7 @@ export default function AllWin() {
       brokerCashAfterDividend = Math.round((workBroker + net) * 100) / 100;
     }
 
-    const { paymentMethod, linkedDebtId: _ld, feeStr: _fee, taxStr: _tax, ...rest } = form;
+    const { paymentMethod, linkedDebtId: _ld, feeStr: _fee, taxStr: _tax, currency: _cur, ...rest } = form;
     const txDate = /^\d{4}-\d{2}-\d{2}$/.test(form.date) ? form.date : todayIsoDate();
     const row: Transaction = {
       ...rest,
@@ -3622,6 +3701,9 @@ export default function AllWin() {
       date: txDate,
       ...(paymentMethod ? { paymentMethod } : {}),
       ...(linkedDebtId != null ? { linkedDebtId, linkedDebtName } : {}),
+      ...(foreignCurrency && foreignAmount != null
+        ? { foreignCurrency, foreignAmount, fxRateToEur }
+        : {}),
       ...(form.type === 'ausgabe' && form.category === 'Notgroschen' && form.paymentMethod !== 'Notgroschen' && form.paymentMethod !== 'Einzahlung Cash Depot'
         ? { fillsNotgroschen: true }
         : {}),
@@ -5387,6 +5469,11 @@ export default function AllWin() {
           {tx.type === 'einnahme' ? '+' : '-'}
           {fmt(+tx.amount)}
         </div>
+        {tx.foreignCurrency && tx.foreignAmount != null && tx.foreignCurrency !== BASE_CURRENCY && (
+          <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 500, lineHeight: 1.3, textAlign: 'right' }}>
+            {formatForeignPaidLine(tx.foreignAmount, tx.foreignCurrency)}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 6 }}>
           <button
             type="button"
@@ -5703,13 +5790,46 @@ export default function AllWin() {
           ))}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <input
-            style={S.input}
-            inputMode="decimal"
-            placeholder="Betrag in € (z. B. 3200,50)"
-            value={form.amount}
-            onChange={(e) => setForm((f) => ({ ...f, amount: normalizeMoneyDecimalInput(e.target.value) }))}
-          />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+            <input
+              style={{ ...S.input, flex: 1, marginBottom: 0 }}
+              inputMode="decimal"
+              placeholder={
+                form.currency === BASE_CURRENCY
+                  ? 'Betrag in € (z. B. 3200,50)'
+                  : `Betrag in ${form.currency} (Bar vor Ort)`
+              }
+              value={form.amount}
+              onChange={(e) => setForm((f) => ({ ...f, amount: normalizeMoneyDecimalInput(e.target.value) }))}
+            />
+            <select
+              style={{ ...S.select, width: 92, flexShrink: 0, marginBottom: 0, padding: '10px 8px' }}
+              value={form.currency}
+              onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
+              aria-label="Währung"
+            >
+              {MONEY_CURRENCIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code}
+                </option>
+              ))}
+            </select>
+          </div>
+          {form.currency !== BASE_CURRENCY && (
+            <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.45 }}>
+              {fxLoading && 'Wechselkurs wird geladen…'}
+              {!fxLoading && fxError && fxError}
+              {!fxLoading && !fxError && convertedEurPreview != null && (
+                <>
+                  ≈ <strong style={{ color: '#c9d1d9' }}>{fmt(convertedEurPreview)}</strong> in Euro
+                  {fxRateDate ? ` · EZB-Kurs vom ${fxRateDate}` : ''}
+                </>
+              )}
+              {!fxLoading && !fxError && convertedEurPreview == null && String(form.amount).trim() && (
+                <>Betrag eingeben — wird automatisch in Euro umgerechnet.</>
+              )}
+            </div>
+          )}
           {form.type === 'einnahme' && form.category === 'Dividende' && (
             <>
               <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.45 }}>
