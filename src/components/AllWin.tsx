@@ -541,7 +541,7 @@ async function compressReceiptImageFile(file: File): Promise<{ base64: string; m
       el.onerror = () => reject(new Error('Bild konnte nicht geladen werden.'));
       el.src = url;
     });
-    const maxDim = 1600;
+    const maxDim = 2200;
     let w = img.naturalWidth;
     let h = img.naturalHeight;
     if (!w || !h) throw new Error('Bild hat keine Größe.');
@@ -556,7 +556,7 @@ async function compressReceiptImageFile(file: File): Promise<{ base64: string; m
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Vorschau nicht möglich.');
     ctx.drawImage(img, 0, 0, w, h);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
     const base64 = dataUrl.split(',')[1] || '';
     if (!base64) throw new Error('Komprimierung fehlgeschlagen.');
     return { base64, mimeType: 'image/jpeg' };
@@ -3624,7 +3624,7 @@ export default function AllWin() {
       setForm((f) => ({
         ...f,
         type: 'ausgabe',
-        amount: String(s.amount),
+        amount: String(s.amount).replace('.', ','),
         date: s.date && /^\d{4}-\d{2}-\d{2}/.test(s.date) ? s.date : f.date,
         category: cat,
         note: String(s.note || '').trim().slice(0, 200),

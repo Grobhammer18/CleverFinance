@@ -43,14 +43,17 @@ function normalizeCategory(raw) {
   return 'Sonstiges';
 }
 
-function normalizePaymentMethod(raw) {
+function normalizePaymentMethod(raw, merchant = '', visibleText = '') {
+  const blob = `${raw} ${merchant} ${visibleText}`.toLowerCase();
   const s = String(raw || '').trim();
   const hit = PAYMENT_METHODS.find((p) => p.toLowerCase() === s.toLowerCase());
   if (hit) return hit;
-  if (/ec|giro|debit|karte|card|visa|master/i.test(s)) return 'Kreditkarte';
-  if (/bar|cash/i.test(s)) return 'Bar';
-  if (/paypal/i.test(s)) return 'PayPal';
-  if (/lastschrift|sepa/i.test(s)) return 'Lastschrift';
+  if (/lidl\s*pay|apple\s*pay|google\s*pay|kart|karte|ec-|girocard|giro|debit|visa|master|contactless|kontaktlos|pay\b/i.test(blob)) {
+    return 'Kreditkarte';
+  }
+  if (/paypal/i.test(blob)) return 'PayPal';
+  if (/lastschrift|sepa/i.test(blob)) return 'Lastschrift';
+  if (/bar|cash\b/i.test(blob)) return 'Bar';
   return '';
 }
 
@@ -59,7 +62,12 @@ function parseGermanAmount(raw) {
   if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
     return Math.round(raw * 100) / 100;
   }
-  const s = String(raw).replace(/\s/g, '').replace(/€|EUR/gi, '').replace(',', '.');
+  let s = String(raw).replace(/\s/g, '').replace(/€|EUR/gi, '');
+  if (s.includes(',') && s.includes('.')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.includes(',')) {
+    s = s.replace(',', '.');
+  }
   const m = s.match(/(\d+\.?\d*)/);
   if (!m) return null;
   const n = parseFloat(m[1]);
@@ -76,9 +84,76 @@ function parseReceiptDate(raw) {
     if (y < 100) y += 2000;
     const m = String(parseInt(de[2], 10)).padStart(2, '0');
     const d = String(parseInt(de[1], 10)).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    if (+m >= 1 && +m <= 12 && +d >= 1 && +d <= 31) return `${y}-${m}-${d}`;
   }
   return null;
+}
+
+/** Betrag aus typischen deutschen Kassenzettel-Zeilen (zu zahlen, Lidl Pay, …). */
+function extractAmountFromReceiptText(text) {
+  const t = String(text || '').replace(/\r/g, '\n');
+  if (!t.trim()) return null;
+
+  const linePatterns = [
+    /zu\s*zahlen[^\d\n]*(\d{1,5}[,.]\d{2})/i,
+    /lidl\s*pay[^\d\n]*(\d{1,5}[,.]\d{2})/i,
+    /(?:^|\n)\s*SUMME\s*(?:EUR)?[^\d\n]*(\d{1,5}[,.]\d{2})/im,
+    /gesamtbetrag[^\d\n]*(\d{1,5}[,.]\d{2})/i,
+    /rechnungsbetrag[^\d\n]*(\d{1,5}[,.]\d{2})/i,
+    /(?:^|\n)\s*TOTAL[^\d\n]*(\d{1,5}[,.]\d{2})/im,
+  ];
+  for (const p of linePatterns) {
+    const m = t.match(p);
+    if (m) {
+      const amt = parseGermanAmount(m[1]);
+      if (amt && amt >= 0.01) return amt;
+    }
+  }
+
+  /** MWST-Zeilen ignorieren — nur „Summe“ am Ende mit Brutto-Spalte. */
+  const mwstSumme = t.match(/Summe\s+[\d,.]+\s+[\d,.]+\s+(\d{1,5}[,.]\d{2})/i);
+  if (mwstSumme) {
+    const amt = parseGermanAmount(mwstSumme[1]);
+    if (amt && amt >= 1) return amt;
+  }
+
+  return null;
+}
+
+function extractDateFromReceiptText(text) {
+  const t = String(text || '');
+  const tse = t.match(/(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}/);
+  if (tse) return tse[1];
+
+  const withTime = t.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})\s+\d{1,2}:\d{2}\b/);
+  if (withTime) {
+    const parsed = parseReceiptDate(`${withTime[1]}.${withTime[2]}.${withTime[3]}`);
+    if (parsed) return parsed;
+  }
+
+  const dates = [...t.matchAll(/\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})\b/g)];
+  for (const m of dates) {
+    const parsed = parseReceiptDate(`${m[1]}.${m[2]}.${m[3]}`);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function pickBestAmount(modelAmount, textAmount) {
+  const model = parseGermanAmount(modelAmount);
+  const fromText = textAmount != null ? parseGermanAmount(textAmount) : null;
+  if (!fromText) return model;
+  if (!model) return fromText;
+  const ratio = fromText / model;
+  if (ratio > 1.15 || ratio < 0.85) return fromText;
+  return model;
+}
+
+function pickBestDate(modelDate, textDate) {
+  const fromModel = parseReceiptDate(modelDate);
+  const fromText = textDate ? parseReceiptDate(textDate) : null;
+  if (fromText && fromModel && fromText !== fromModel) return fromText;
+  return fromText || fromModel;
 }
 
 /** OpenAI-Fehler → kurze deutsche Meldung fürs Handy. */
@@ -130,22 +205,31 @@ export async function scanReceiptImage({ imageBase64, mimeType = 'image/jpeg' })
   const safeMime = /^image\/(jpeg|jpg|png|webp|heic|heif)$/i.test(mimeType) ? mimeType : 'image/jpeg';
   const dataUrl = `data:${safeMime};base64,${b64}`;
 
-  const systemPrompt = `Du analysierst Fotos von deutschen Kassenzetteln, Quittungen, Rechnungen und Belegen (PDF-Ausdrucke als Foto).
-Antworte NUR mit einem JSON-Objekt (kein Markdown drumherum), Schema:
+  const systemPrompt = `Du analysierst Fotos von deutschen Kassenzetteln, Quittungen und Rechnungen (auch lange Supermarkt-Bons wie Lidl, Aldi, Rewe).
+Antworte NUR mit JSON (kein Markdown):
 {
   "amount": number,
   "date": "YYYY-MM-DD oder null",
   "merchant": "string",
   "category": "eine aus: ${EXPENSE_CATEGORIES.join(' | ')}",
   "paymentMethod": "eine aus: ${PAYMENT_METHODS.join(' | ')} oder leer",
-  "confidence": "high" | "medium" | "low"
+  "confidence": "high" | "medium" | "low",
+  "visibleText": "wichtigste Zeilen des Belegs als Klartext, besonders unten: zu zahlen, Lidl Pay, Datum, Uhrzeit, TSE"
 }
-Regeln:
-- amount = GESAMT / SUMME / Rechnungsbetrag / zu zahlen / Brutto (EUR), nicht Einzelposten addieren wenn Gesamtsumme sichtbar.
-- merchant = Laden, Anbieter oder Rechnungssteller (kurz).
-- Bei Rechnungen: Rechnungsdatum wenn kein Kassendatum; Ausgabe (keine Einnahme).
-- Bei Unsicherheit: category "Sonstiges", confidence "low".
-- Typische Ausgabe (kein Gehalt).`;
+
+KRITISCH — Betrag (amount):
+- NUR der Endbetrag den der Kunde gezahlt hat: Zeile „zu zahlen“, „Lidl Pay“, „Gesamtbetrag“, „SUMME EUR“ (Zahlung).
+- NICHT: Einzelposten, Stückpreise, MWST/MwSt.-Steuerbeträge (z. B. 4,15 oder 4,28), Netto-Summen, Pfand, Rabatt-Zeilen.
+- Bei Lidl: unter „zu zahlen“ und bei „Lidl Pay“ steht derselbe Gesamtbetrag (z. B. 64,16).
+
+Datum:
+- Kassendatum auf dem Bon (oft DD.MM.YY mit Uhrzeit, YY=26 → 2026). TSE-Zeile (2026-06-01T…) hat Vorrang.
+- Kein erfundenes Datum — nur was auf dem Beleg steht.
+
+Zahlungsart:
+- „Lidl Pay“, EC, Girocard, Karte → paymentMethod „Kreditkarte“, nicht „Bar“.
+
+merchant = Markenname (z. B. Lidl). Ausgabe, kein Gehalt.`;
 
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -155,15 +239,18 @@ Regeln:
     },
     body: JSON.stringify({
       model,
-      temperature: 0.1,
-      max_tokens: 400,
+      temperature: 0,
+      max_tokens: 900,
       messages: [
         { role: 'system', content: systemPrompt },
         {
           role: 'user',
           content: [
-            { type: 'text', text: 'Extrahiere die Buchungsdaten aus diesem Kassenzettel, dieser Quittung oder Rechnung.' },
-            { type: 'image_url', image_url: { url: dataUrl, detail: 'low' } },
+            {
+              type: 'text',
+              text: 'Lies den ganzen Beleg von oben bis unten. Gib amount = „zu zahlen“ / Zahlungsbetrag und visibleText mit den relevanten Zeilen.',
+            },
+            { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
           ],
         },
       ],
@@ -180,19 +267,30 @@ Regeln:
 
   const content = data?.choices?.[0]?.message?.content;
   const parsed = extractJsonObject(content);
+  const visibleText = String(parsed.visibleText || parsed.ocrText || parsed.text || '').trim();
 
-  const amount = parseGermanAmount(parsed.amount);
+  const textAmount = extractAmountFromReceiptText(visibleText);
+  const amount = pickBestAmount(parsed.amount, textAmount);
   if (!amount) {
     throw new Error('Gesamtbetrag auf dem Beleg nicht erkannt — bitte manuell eintragen.');
   }
 
-  const date = parseReceiptDate(parsed.date) || new Date().toISOString().slice(0, 10);
+  const textDate = extractDateFromReceiptText(visibleText);
+  const date = pickBestDate(parsed.date, textDate) || new Date().toISOString().slice(0, 10);
+
   const merchant = String(parsed.merchant || parsed.store || parsed.shop || '')
     .trim()
     .slice(0, 120);
-  const category = normalizeCategory(parsed.category);
-  const paymentMethod = normalizePaymentMethod(parsed.paymentMethod);
-  const confidence = ['high', 'medium', 'low'].includes(parsed.confidence) ? parsed.confidence : 'medium';
+  const category = normalizeCategory(parsed.category || merchant);
+  const paymentMethod = normalizePaymentMethod(parsed.paymentMethod, merchant, visibleText);
+
+  let confidence = ['high', 'medium', 'low'].includes(parsed.confidence) ? parsed.confidence : 'medium';
+  if (textAmount && Math.abs(textAmount - (parseGermanAmount(parsed.amount) || 0)) > 0.02) {
+    confidence = confidence === 'high' ? 'medium' : confidence;
+  }
+  if (!textAmount && amount > 50 && visibleText.length < 40) {
+    confidence = 'low';
+  }
 
   return {
     type: 'ausgabe',
