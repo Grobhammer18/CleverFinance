@@ -75,7 +75,7 @@ function normalizeMoneyDecimalInput(raw: string): string {
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
 const CATS = {
-  einnahmen: ['Gehalt', 'Trinkgeld', 'Gutschrift', 'Geschenk', 'Dividende', 'Freelance', 'Nebenjob', 'Sonstiges'],
+  einnahmen: ['Gehalt', 'Trinkgeld', 'Gutschrift', 'Geschenk', 'Dividende', 'Zinsen', 'Freelance', 'Nebenjob', 'Sonstiges'],
   ausgaben: ['Essen & Trinken', 'Fahrtkosten', 'Abos', 'Kreditrate', 'Notgroschen', 'Miete', 'Kleidung', 'Gesundheit', 'Freizeit', 'Geschenk', 'Sonstiges'],
 };
 
@@ -5803,7 +5803,7 @@ export default function AllWin() {
         {moneyIncomeOpen && (
           <>
             <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2, marginBottom: 12, lineHeight: 1.45 }}>
-              Aus Einnahmen in <strong style={{ color: '#e6edf3' }}>Gehalt</strong>, <strong style={{ color: '#e6edf3' }}>Trinkgeld</strong>, <strong style={{ color: '#e6edf3' }}>Gutschrift</strong>, <strong style={{ color: '#e6edf3' }}>Geschenk</strong>, Dividende, Freelance, Nebenjob, Sonstiges. Je{' '}
+              Aus Einnahmen in <strong style={{ color: '#e6edf3' }}>Gehalt</strong>, <strong style={{ color: '#e6edf3' }}>Trinkgeld</strong>, <strong style={{ color: '#e6edf3' }}>Gutschrift</strong>, <strong style={{ color: '#e6edf3' }}>Geschenk</strong>, Dividende, Zinsen, Freelance, Nebenjob, Sonstiges. Je{' '}
               <strong style={{ color: '#e6edf3' }}>Kategorie + Notizzeile</strong> die <strong style={{ color: '#e6edf3' }}>Summe aller Buchungen</strong> — Kreisdiagramm nach Kategorie unter Tab{' '}
               <strong style={{ color: '#e6edf3' }}>Übersicht</strong>.
             </div>
