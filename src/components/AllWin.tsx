@@ -361,6 +361,43 @@ function formatVarCostTitle(tx: Transaction): string {
   return n || 'Ohne Notiz';
 }
 
+/** Notiz-Vorschläge aus früheren Buchungen (ab 2 Zeichen, gleiche Kategorie zuerst). */
+function noteAutocompleteSuggestions(
+  transactions: Transaction[],
+  type: 'einnahme' | 'ausgabe',
+  category: string,
+  query: string,
+  limit = 8,
+): string[] {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const matches = (note: string) => {
+    const n = note.toLowerCase();
+    return n.startsWith(q) || n.includes(q);
+  };
+  const add = (raw: string) => {
+    const note = raw.trim();
+    if (note.length < 2) return;
+    const key = note.toLowerCase();
+    if (seen.has(key) || !matches(note)) return;
+    seen.add(key);
+    out.push(note);
+  };
+  for (const tx of transactions) {
+    if (tx.type !== type || tx.category !== category) continue;
+    add(tx.note || '');
+    if (out.length >= limit) return out;
+  }
+  for (const tx of transactions) {
+    if (tx.type !== type || tx.category === category) continue;
+    add(tx.note || '');
+    if (out.length >= limit) return out;
+  }
+  return out.slice(0, limit);
+}
+
 /** Pro Kategorie + Notiz die neueste variable Ausgabe. */
 function latestVarCostRows(transactions: Transaction[]): Transaction[] {
   const rows = transactions.filter((t) => t.type === 'ausgabe' && VAR_KOST_CATEGORIES.has(t.category));
@@ -1791,6 +1828,16 @@ export default function AllWin() {
   const incomeOverviewSum = useMemo(
     () => Math.round(allIncomeTransactions(transactions).reduce((s, t) => s + parseIncomeAmount(t.amount), 0) * 100) / 100,
     [transactions],
+  );
+  const noteSuggestions = useMemo(
+    () =>
+      noteAutocompleteSuggestions(
+        transactions,
+        form.type,
+        form.category,
+        form.note,
+      ),
+    [transactions, form.type, form.category, form.note],
   );
   const chartFixedPie = useMemo(
     () =>
@@ -5744,18 +5791,67 @@ export default function AllWin() {
               🛡️ Zahlung aus dem Notgroschen — der Stand auf Home wird um den Betrag verringert (Ausgabe bleibt im Monat erfasst).
             </div>
           )}
-          <input
-            style={S.input}
-            placeholder={
-              form.type === 'ausgabe' && form.category === 'Abos'
-                ? 'Notiz z. B. Netflix, Spotify, Handyvertrag…'
-                : form.type === 'ausgabe' && form.category === 'Miete'
-                  ? 'z. B. Warmmiete, Garage, Nebenkosten…'
-                  : 'Notiz (optional)'
-            }
-            value={form.note}
-            onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
-          />
+          <div style={{ position: 'relative' }}>
+            <input
+              style={S.input}
+              placeholder={
+                form.type === 'ausgabe' && form.category === 'Abos'
+                  ? 'Notiz z. B. Netflix, Spotify, Handyvertrag…'
+                  : form.type === 'ausgabe' && form.category === 'Miete'
+                    ? 'z. B. Warmmiete, Garage, Nebenkosten…'
+                    : 'Notiz (optional)'
+              }
+              value={form.note}
+              onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
+              aria-autocomplete="list"
+              aria-expanded={noteSuggestions.length > 0}
+              aria-controls={noteSuggestions.length > 0 ? 'money-note-suggestions' : undefined}
+            />
+            {noteSuggestions.length > 0 && (
+              <div
+                id="money-note-suggestions"
+                role="listbox"
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  right: 0,
+                  marginTop: 4,
+                  zIndex: 20,
+                  borderRadius: 8,
+                  border: `1px solid ${awBg.line}`,
+                  background: awBg.card,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+                  overflow: 'hidden',
+                }}
+              >
+                {noteSuggestions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    role="option"
+                    aria-selected={form.note.trim() === suggestion}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => setForm((f) => ({ ...f, note: suggestion }))}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      padding: '10px 12px',
+                      border: 'none',
+                      borderBottom: `1px solid ${awBg.line}`,
+                      background: 'transparent',
+                      color: '#e6edf3',
+                      fontSize: 13,
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
             <button style={{ ...S.btn(), flex: 1, minWidth: 120 }} onClick={addTx}>
               {editingTxId != null ? '✅ Aktualisieren' : '✅ Speichern'}
