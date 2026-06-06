@@ -373,6 +373,8 @@ function noteAutocompleteSuggestions(
   if (q.length < 2) return [];
   const seen = new Set<string>();
   const out: string[] = [];
+  const finalize = (list: string[]) =>
+    list.filter((note) => note.trim().toLowerCase() !== q).slice(0, limit);
   const matches = (note: string) => {
     const n = note.toLowerCase();
     return n.startsWith(q) || n.includes(q);
@@ -388,14 +390,14 @@ function noteAutocompleteSuggestions(
   for (const tx of transactions) {
     if (tx.type !== type || tx.category !== category) continue;
     add(tx.note || '');
-    if (out.length >= limit) return out;
+    if (out.length >= limit) return finalize(out);
   }
   for (const tx of transactions) {
     if (tx.type !== type || tx.category === category) continue;
     add(tx.note || '');
-    if (out.length >= limit) return out;
+    if (out.length >= limit) return finalize(out);
   }
-  return out.slice(0, limit);
+  return finalize(out);
 }
 
 /** Pro Kategorie + Notiz die neueste variable Ausgabe. */
@@ -5821,7 +5823,7 @@ export default function AllWin() {
               🛡️ Zahlung aus dem Notgroschen — der Stand auf Home wird um den Betrag verringert (Ausgabe bleibt im Monat erfasst).
             </div>
           )}
-          <div style={{ position: 'relative' }}>
+          <div style={{ position: 'relative' }} data-note-field>
             <input
               style={S.input}
               placeholder={
@@ -5862,7 +5864,10 @@ export default function AllWin() {
                     role="option"
                     aria-selected={form.note.trim() === suggestion}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => setForm((f) => ({ ...f, note: suggestion }))}
+                    onClick={(e) => {
+                      setForm((f) => ({ ...f, note: suggestion }));
+                      (e.currentTarget.closest('[data-note-field]')?.querySelector('input') as HTMLInputElement | null)?.blur();
+                    }}
                     style={{
                       display: 'block',
                       width: '100%',
