@@ -1,4 +1,5 @@
-/** Schritte für die In-App-Tour (Spotlight + Sprechblase). */
+import type { AppLocale } from '../i18n/locale';
+
 export type AppTourStep = {
   id: string;
   /** Tab wechseln vor dem Highlight */
@@ -12,7 +13,7 @@ export type AppTourStep = {
   requiresLevelUpUnlocked?: boolean;
 };
 
-export const APP_TOUR_STEPS: AppTourStep[] = [
+const DE_STEPS: AppTourStep[] = [
   {
     id: 'welcome',
     title: 'Willkommen bei Clever Finance! 🎉',
@@ -97,5 +98,98 @@ export const APP_TOUR_STEPS: AppTourStep[] = [
     message: 'Viel Erfolg — leg los mit deiner ersten Buchung unter Money oder schau dir LevelUp an. Bei Fragen einfach die Tour nochmal ansehen.',
   },
 ];
+
+const EN_STEPS: AppTourStep[] = [
+  {
+    id: 'welcome',
+    title: 'Welcome to Clever Finance! 🎉',
+    message:
+      'A quick look at the key spots — with spotlight and tooltip. You can skip anytime or restart the tour later under More.',
+  },
+  {
+    id: 'nav',
+    tab: 'dashboard',
+    target: 'tab-bar',
+    title: 'Your navigation',
+    message:
+      'Switch areas at the bottom. Everything is connected: Money entries affect Home and LevelUp.',
+  },
+  {
+    id: 'home-saldo',
+    tab: 'dashboard',
+    target: 'home-saldo',
+    title: 'Home — month at a glance',
+    message:
+      'See income, expenses and monthly balance here. Numbers come from your Money entries — no double entry.',
+  },
+  {
+    id: 'home-notgroschen',
+    tab: 'dashboard',
+    target: 'home-notgroschen',
+    title: 'Emergency fund',
+    message:
+      'Your safety cushion with progress bar. Adjust balance: top right on the card ⋮ → "Edit balance".',
+  },
+  {
+    id: 'home-portfolio',
+    tab: 'dashboard',
+    target: 'home-portfolio',
+    title: 'Portfolio Power (quick view)',
+    message:
+      'Total = invested positions + cash depot. Details, orders and live prices are under LevelUp.',
+  },
+  {
+    id: 'money',
+    tab: 'transactions',
+    target: 'money-form',
+    title: 'Money — entries',
+    message:
+      'Record income and expenses. Tip: category "Dividend" books to your cash depot automatically. Loan payments can link to a Boost debt.',
+  },
+  {
+    id: 'charts',
+    tab: 'charts',
+    target: 'charts-main',
+    title: 'Overview — charts',
+    message:
+      'Year charts, wealth history and portfolio development. Ideal for spotting trends over months.',
+  },
+  {
+    id: 'boost',
+    tab: 'debts',
+    target: 'boost-debts',
+    title: 'Boost — debts',
+    message: 'Add debts, pay installments or pay off completely. Paid-off loans go to the archive.',
+    requiresOpenDebts: true,
+  },
+  {
+    id: 'levelup',
+    tab: 'invest',
+    target: 'portfolio-power',
+    title: 'LevelUp — portfolio',
+    message:
+      'Portfolio Power (total incl. cash depot), orders in shares and live market data. Edit cash depot: ⋮ top right on the card.',
+    requiresLevelUpUnlocked: true,
+  },
+  {
+    id: 'profile',
+    tab: 'profile',
+    target: 'profile-main',
+    title: 'More — profile & plan',
+    message: 'Profile, subscription, notifications and settings. You can restart the app tour here too.',
+  },
+  {
+    id: 'done',
+    title: 'You\'re all set! 🚀',
+    message: 'Good luck — start with your first Money entry or explore LevelUp. Questions? Just run the tour again.',
+  },
+];
+
+/** @deprecated Use getAppTourSteps(locale) */
+export const APP_TOUR_STEPS = DE_STEPS;
+
+export function getAppTourSteps(locale: AppLocale): AppTourStep[] {
+  return locale === 'en' ? EN_STEPS : DE_STEPS;
+}
 
 export const APP_TOUR_STORAGE_KEY = 'allwin.appTourDone';

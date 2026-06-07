@@ -18,7 +18,7 @@ import {
   resolveLevelUpMode,
   sharesFromOnboardingInvest,
 } from '../onboarding/onboardingLogic';
-import { APP_TOUR_STEPS, APP_TOUR_STORAGE_KEY } from '../onboarding/appGuideContent';
+import { getAppTourSteps, APP_TOUR_STORAGE_KEY } from '../onboarding/appGuideContent';
 import AppGuideTour from './AppGuideTour';
 import CleverFinanceLogo from './CleverFinanceLogo';
 import MarketAssetIcon, { type MarketAssetLogoFields } from './MarketAssetIcon';
@@ -43,7 +43,7 @@ import {
   pickVacationCurrency,
 } from '../currencyFx';
 import { LocaleProvider } from '../i18n/LocaleContext';
-import { t as translate } from '../i18n/messages';
+import { t as translate, monthLabel, categoryLabel, paymentMethodLabel } from '../i18n/messages';
 import {
   localeToIntlTag,
   normalizeLocale,
@@ -96,8 +96,6 @@ function normalizeMoneyDecimalInput(raw: string): string {
   }
   return hasSep ? `${digitsBefore},${digitsAfter}` : digitsBefore;
 }
-
-const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
 const CATS = {
   einnahmen: ['Gehalt', 'Trinkgeld', 'Gutschrift', 'Geschenk', 'Dividende', 'Zinsen', 'Freelance', 'Nebenjob', 'Sonstiges'],
@@ -340,18 +338,18 @@ function fixedCostDedupeKey(t: Transaction): string {
 }
 
 /** Titelzeile in der Fixkosten-Liste */
-function formatFixedCostTitle(tx: Transaction): string {
+function formatFixedCostTitle(tx: Transaction, locale: AppLocale): string {
   if (tx.category === 'Kreditrate') {
-    return (tx.linkedDebtName || tx.note || '').trim() || 'Kreditrate';
+    return (tx.linkedDebtName || tx.note || '').trim() || categoryLabel('Kreditrate', locale);
   }
-  if (tx.category === 'Miete') return (tx.note || '').trim() || 'Miete';
-  return (tx.note || '').trim() || 'Ohne Bezeichnung';
+  if (tx.category === 'Miete') return (tx.note || '').trim() || categoryLabel('Miete', locale);
+  return (tx.note || '').trim() || translate('common.noLabel', locale);
 }
 
-function fixedCostKindShort(cat: string): string {
-  if (cat === 'Kreditrate') return 'Kreditrate';
-  if (cat === 'Miete') return 'Miete';
-  return 'Abo';
+function fixedCostKindShort(cat: string, locale: AppLocale): string {
+  if (cat === 'Kreditrate') return categoryLabel('Kreditrate', locale);
+  if (cat === 'Miete') return categoryLabel('Miete', locale);
+  return translate('common.aboShort', locale);
 }
 
 /** Pro Position die neueste Ausgabe: Abos/Miete über Notizzeile, Kreditraten über verknüpfte Schuld (Boost). */
@@ -540,19 +538,22 @@ function todayIsoDate() {
 }
 
 /** Kassenzettel-Foto für API verkleinern (max. Kantenlänge, JPEG). */
-async function compressReceiptImageFile(file: File): Promise<{ base64: string; mimeType: string }> {
+async function compressReceiptImageFile(
+  file: File,
+  locale: AppLocale = readStoredLocale(),
+): Promise<{ base64: string; mimeType: string }> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image();
       el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error('Bild konnte nicht geladen werden.'));
+      el.onerror = () => reject(new Error(translate('toast.receiptUnreadable', locale)));
       el.src = url;
     });
     const maxDim = 2200;
     let w = img.naturalWidth;
     let h = img.naturalHeight;
-    if (!w || !h) throw new Error('Bild hat keine Größe.');
+    if (!w || !h) throw new Error(translate('auth.imageNoSize', locale));
     if (w > maxDim || h > maxDim) {
       const ratio = Math.min(maxDim / w, maxDim / h);
       w = Math.round(w * ratio);
@@ -562,11 +563,11 @@ async function compressReceiptImageFile(file: File): Promise<{ base64: string; m
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Vorschau nicht möglich.');
+    if (!ctx) throw new Error(translate('auth.previewFailed', locale));
     ctx.drawImage(img, 0, 0, w, h);
     const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
     const base64 = dataUrl.split(',')[1] || '';
-    if (!base64) throw new Error('Komprimierung fehlgeschlagen.');
+    if (!base64) throw new Error(translate('toast.receiptScanFailed', locale));
     return { base64, mimeType: 'image/jpeg' };
   } finally {
     URL.revokeObjectURL(url);
@@ -820,9 +821,9 @@ type AuthUser = {
 };
 
 const PRICING = {
-  free: { monthly: 0, yearly: 0, name: 'Finance Free', features: ['Basis Tracking', 'Buchungen', 'Schulden-Tracker'] },
-  pro: { monthly: 9.99, yearly: 99.99, name: 'Finance Pro', features: ['Live Marktdaten', 'Jahres-Insights', 'Portfolio-Übersicht'] },
-  elite: { monthly: 19.99, yearly: 199.99, name: 'Finance Elite', features: ['Alles aus Finance Pro', 'Priorität', 'Advanced Analytics'] },
+  free: { monthly: 0, yearly: 0, name: 'Finance Free', features: ['basicTracking', 'bookings', 'debtTracker'] as const },
+  pro: { monthly: 9.99, yearly: 99.99, name: 'Finance Pro', features: ['liveMarket', 'yearlyInsights', 'portfolioOverview'] as const },
+  elite: { monthly: 19.99, yearly: 199.99, name: 'Finance Elite', features: ['allFromPro', 'priority', 'advancedAnalytics'] as const },
 };
 
 /** Öffentliche Testphase: alles kostenlos, keine Stripe-Checkout-Buttons (siehe docs/BETA_LAUNCH.md). */
@@ -1440,7 +1441,7 @@ function CelebrationCard({
   );
 }
 
-function DebtZeroVictoryOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
+function DebtZeroVictoryOverlay({ open, onClose, locale }: { open: boolean; onClose: () => void; locale: AppLocale }) {
   return (
     <CelebrationCard
       open={open}
@@ -1449,14 +1450,14 @@ function DebtZeroVictoryOverlay({ open, onClose }: { open: boolean; onClose: () 
       icon="🏆"
       accent="#f8d03a"
       confettiCount={18}
-      title="Alle Schulden abbezahlt"
-      body="Du hast alle offenen Boost-Schulden tilgt. Guter Meilenstein — als Nächstes lohnt sich konsequent Sparen und Investieren."
-      actionLabel="Weiter"
+      title={translate('overlay.debtZeroTitle', locale)}
+      body={translate('overlay.debtZeroBody', locale)}
+      actionLabel={translate('overlay.debtZeroAction', locale)}
     />
   );
 }
 
-function NotgroschenFullOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
+function NotgroschenFullOverlay({ open, onClose, locale }: { open: boolean; onClose: () => void; locale: AppLocale }) {
   return (
     <CelebrationCard
       open={open}
@@ -1465,9 +1466,9 @@ function NotgroschenFullOverlay({ open, onClose }: { open: boolean; onClose: () 
       icon="🛡️"
       accent="#5b93ff"
       confettiCount={16}
-      title="Notgroschen am Ziel"
-      body="Dein Polster entspricht jetzt deinem Zielbetrag. Damit bist du für unerwartete Ausgaben besser abgesichert."
-      actionLabel="Verstanden"
+      title={translate('overlay.emergencyFullTitle', locale)}
+      body={translate('overlay.emergencyFullBody', locale)}
+      actionLabel={translate('overlay.emergencyFullAction', locale)}
     />
   );
 }
@@ -1476,12 +1477,14 @@ function PortfolioPowerMilestoneOverlay({
   open,
   milestone,
   onClose,
+  locale,
 }: {
   open: boolean;
   milestone: PortfolioPowerMilestone;
   onClose: () => void;
+  locale: AppLocale;
 }) {
-  const meta = milestoneCelebrationMeta(milestone);
+  const meta = milestoneCelebrationMeta(milestone, locale);
   return (
     <CelebrationCard
       open={open}
@@ -1681,6 +1684,7 @@ export default function AllWin() {
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
   const [authGate, setAuthGate] = useState<'welcome' | 'auth'>('welcome');
   const [locale, setLocaleState] = useState<AppLocale>(() => readStoredLocale());
+  const tr = useCallback((key: string, vars?: Record<string, string>) => translate(key, locale, vars), [locale]);
   const [preOnboardingPhase, setPreOnboardingPhase] = useState<'language' | 'wizard'>('language');
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [onboardingV2, setOnboardingV2] = useState<OnboardingV2Payload | null>(null);
@@ -1884,7 +1888,7 @@ export default function AllWin() {
       })
       .catch(() => {
         if (!cancelled) {
-          setFxError('Wechselkurs gerade nicht verfügbar.');
+          setFxError(tr('common.fxErrorUnavailable'));
           setFxBasePerUnit(NaN);
         }
       })
@@ -1913,11 +1917,11 @@ export default function AllWin() {
     () =>
       fixedCostOverviewRows
         .map((tx) => ({
-          name: `${formatFixedCostTitle(tx)} (${fixedCostKindShort(tx.category)})`,
+          name: `${formatFixedCostTitle(tx, locale)} (${fixedCostKindShort(tx.category, locale)})`,
           value: Math.abs(parseFloat(String(tx.amount).replace(/\s/g, '').replace(',', '.'))) || 0,
         }))
         .filter((x) => x.value > 0),
-    [fixedCostOverviewRows],
+    [fixedCostOverviewRows, locale],
   );
   const chartVarPie = useMemo(
     () =>
@@ -2195,7 +2199,7 @@ export default function AllWin() {
           headers: { Authorization: `Bearer ${authToken}` },
         });
         if (!res.ok) {
-          showToast('Cloud-Daten konnten nicht geladen werden. Bitte neu anmelden.', 'error');
+          showToast(tr('toast.cloudLoadFailed'), 'error');
           const doneOffline = readLocalOnboardingDone(authUser.id, authUser.email);
           flushSync(() => {
             if (doneOffline) setOnboardingDone(true);
@@ -2809,11 +2813,11 @@ export default function AllWin() {
         const data = await res.json();
         if (data?.paid && (data?.tier === 'pro' || data?.tier === 'elite')) {
           setSub({ tier: data.tier, cycle: data.cycle === 'yearly' ? 'yearly' : 'monthly' });
-          showToast(`Abo aktiv: ${PRICING[data.tier].name} ✅`);
+          showToast(tr('toast.subActive', { plan: PRICING[data.tier].name }));
           setTab('profile');
         }
       } catch {
-        showToast('Abo konnte nicht verifiziert werden.', 'error');
+        showToast(tr('toast.subVerifyFailed'), 'error');
       } finally {
         const clean = `${window.location.origin}${window.location.pathname}`;
         window.history.replaceState({}, '', clean);
@@ -2873,7 +2877,7 @@ export default function AllWin() {
           ),
         );
       } catch {
-        showToast('Kursverlauf konnte nicht geladen werden.', 'error');
+        showToast(tr('toast.historyLoadFailed'), 'error');
       } finally {
         setMarketHistoryLoading((cur) => (cur === sym ? null : cur));
       }
@@ -3027,15 +3031,15 @@ export default function AllWin() {
   ) => {
     const sym = sanitizeWatchlistSymbol(resolved.sym) || resolved.sym.toUpperCase();
     if (BASE_SYM_SET.has(sym)) {
-      showToast(`${sym} ist bereits Teil der Standard-Watchlist.`, 'error');
+      showToast(tr('toast.alreadyDefaultWatchlist', { sym }), 'error');
       return;
     }
     if (market.some((m) => m.sym === sym)) {
-      showToast(`${sym} steht schon in der Watchlist.`, 'error');
+      showToast(tr('toast.alreadyInWatchlist', { sym }), 'error');
       return;
     }
     if (watchlistExtras.length >= 40) {
-      showToast('Maximal 40 eigene Instrumente.', 'error');
+      showToast(tr('toast.maxInstruments'), 'error');
       return;
     }
     const name = resolved.name.trim().slice(0, 56) || sym;
@@ -3062,8 +3066,8 @@ export default function AllWin() {
     const label = toastLabel || name;
     showToast(
       watchlistOnly
-        ? `${label} (${sym}) nur in Live Marktdaten ✅`
-        : `${label} (${sym}) zur Watchlist hinzugefügt ✅`,
+        ? tr('toast.watchlistOnlyAdded', { label, sym })
+        : tr('toast.watchlistAdded', { label, sym }),
     );
   };
 
@@ -3153,7 +3157,7 @@ export default function AllWin() {
     const watchlistOnly = opts?.watchlistOnly === true;
     const raw = wlAddSym.trim();
     if (!raw) {
-      showToast('Bitte Börsen-Kürzel oder ISIN eingeben.', 'error');
+      showToast(tr('toast.enterTickerOrIsin'), 'error');
       return;
     }
     const kind = wlAddKind === 'crypto' ? 'crypto' : 'stock';
@@ -3178,19 +3182,19 @@ export default function AllWin() {
           logoUrlFallbacks: r.logoUrlFallbacks,
         };
       } else if (isIsinCode(raw)) {
-        showToast('ISIN-Auflösung braucht den Billing-Server (Railway).', 'error');
+        showToast(tr('toast.isinNeedsServer'), 'error');
         return;
       } else {
         const sym = sanitizeWatchlistSymbol(raw);
         if (!sym) {
-          showToast('Ungültiges Börsen-Kürzel — z. B. AAPL, SAP.DE, BTC.', 'error');
+          showToast(tr('toast.invalidTicker'), 'error');
           return;
         }
         resolved = { sym, name: wlAddName.trim() || sym, kind };
       }
       applyResolvedInstrument(resolved, watchlistOnly);
     } catch (e) {
-      showToast(e instanceof Error ? e.message : 'Instrument konnte nicht hinzugefügt werden.', 'error');
+      showToast(e instanceof Error ? e.message : tr('toast.instrumentAddFailed'), 'error');
     } finally {
       setWlAddLoading(false);
     }
@@ -3208,7 +3212,7 @@ export default function AllWin() {
     });
     setPortfolioTrades((prev) => prev.filter((t) => t.sym !== s));
     setTradeSym((cur) => (cur === s ? BASE_MARKET[0].sym : cur));
-    showToast(`${s} entfernt.`);
+    showToast(tr('toast.instrumentRemoved', { sym: s }));
   };
 
   /** Standardtitel (BTC, …) nur aus Portfolio Power / Order ausblenden — Live bleibt. Nur bei Bestand 0. */
@@ -3217,7 +3221,7 @@ export default function AllWin() {
     if (!s || !BASE_SYM_SET.has(s)) return;
     const held = portfolioShares[s] ?? 0;
     if (held > 1e-12) {
-      showToast('Zuerst verkaufen — mit Bestand > 0 kann der Titel hier nicht entfernt werden.', 'error');
+      showToast(tr('toast.sellBeforeRemove'), 'error');
       return;
     }
     const hypotheticalExcluded = Array.from(new Set([...portfolioExcludedBaseSyms, s]));
@@ -3231,11 +3235,11 @@ export default function AllWin() {
       return !!(sx && !BASE_SYM_SET.has(sx) && ex.watchlistOnly !== true);
     });
     if (visibleBaseSyms.length === 0 && !hasTradableUserExtra) {
-      showToast('Mindestens ein Standard-Titel bleibt unter Portfolio sichtbar — oder ein eigenes (handelbares) anlegen.', 'error');
+      showToast(tr('toast.keepOneBaseline'), 'error');
       return;
     }
     setPortfolioExcludedBaseSyms((prev) => (prev.includes(s) ? prev : [...prev, s]));
-    showToast(`${s} unter Portfolio ausgeblendet (Live Marktdaten unverändert).`);
+    showToast(tr('toast.baselineHidden', { sym: s }));
   };
 
   const completeOnboarding = (p: OnboardingV2Payload) => {
@@ -3301,20 +3305,20 @@ export default function AllWin() {
           },
         }),
       }).catch(() => {
-        showToast('Onboarding gespeichert — Sync folgt beim nächsten Laden.', 'success');
+        showToast(tr('toast.onboardingSaved'), 'success');
       });
     }
     if (typeof window !== 'undefined' && !localStorage.getItem(APP_TOUR_STORAGE_KEY)) {
       setAppTourOpen(true);
     } else {
-      showToast('Clever Finance ist bereit! 🎉');
+      showToast(tr('toast.appReady'));
     }
   };
 
   const closeAppTour = () => {
     setAppTourOpen(false);
     if (typeof window !== 'undefined') localStorage.setItem(APP_TOUR_STORAGE_KEY, '1');
-    showToast('Tour abgeschlossen — viel Erfolg! 🎉');
+    showToast(tr('toast.tourDone'));
   };
 
   const startAppTour = () => {
@@ -3350,7 +3354,7 @@ export default function AllWin() {
         body: JSON.stringify({ state: { onboarding: { done: false, reset: true, v2: null } } }),
       });
     }
-    showToast('Onboarding startet neu.', 'success');
+    showToast(tr('toast.onboardingRestart'), 'success');
   };
 
   const submitPortfolioTrade = (opts?: { sellAll?: boolean }) => {
@@ -3359,7 +3363,7 @@ export default function AllWin() {
     const px = row?.price ?? 0;
     const roundEUR = (v: number) => Math.round(v * 100) / 100;
     if (!(px > 0)) {
-      showToast('Marktkurs noch nicht geladen — Live Marktdaten kurz warten oder Seite neu laden.', 'error');
+      showToast(tr('toast.marketPriceNotLoaded'), 'error');
       void refreshMarketQuotes();
       return;
     }
@@ -3368,20 +3372,20 @@ export default function AllWin() {
       const raw = tradeAmount.replace(/\s/g, '').replace(',', '.');
       n = parseFloat(raw);
       if (Number.isNaN(n) || n <= 0) {
-        showToast('Bitte eine gültige Stückzahl eingeben.', 'error');
+        showToast(tr('toast.invalidShares'), 'error');
         return;
       }
     } else if (opts?.sellAll === true) {
       n = portfolioShares[sym] ?? 0;
       if (n <= 0) {
-        showToast('Nichts zu verkaufen (0 Stück).', 'error');
+        showToast(tr('toast.nothingToSell'), 'error');
         return;
       }
     } else {
       const raw = tradeAmount.replace(/\s/g, '').replace(',', '.');
       n = parseFloat(raw);
       if (Number.isNaN(n) || n <= 0) {
-        showToast('Bitte eine gültige Stückzahl eingeben.', 'error');
+        showToast(tr('toast.invalidShares'), 'error');
         return;
       }
     }
@@ -3393,12 +3397,7 @@ export default function AllWin() {
       const cashForShares = Math.max(0, roundEUR(cashAvail - feeEur - taxEur));
       const spend = Math.min(wishSpend, cashForShares);
       if (spend <= 0) {
-        showToast(
-          feeEur + taxEur >= cashAvail
-            ? 'Nicht genug Cash Depot für Order inkl. Gebühr/Steuer.'
-            : 'Kein Cash im Cash Depot — Betrag dort erhöhen (LevelUp · Cash Depot bearbeiten).',
-          'error',
-        );
+        showToast(feeEur + taxEur >= cashAvail ? tr('toast.notEnoughCashFees') : tr('toast.noCashDepot'), 'error');
         return;
       }
       const sharesAdded = spend / px;
@@ -3429,24 +3428,25 @@ export default function AllWin() {
       setTradeFeeStr('');
       setTradeTaxStr('');
       const cappedByCash = wishSpend > cashForShares + 1e-9;
-      const feeHint = feeEur + taxEur > 0 ? ` · inkl. Gebühr/Steuer ${fmt(feeEur + taxEur)}` : '';
-      const msg = cappedByCash
-        ? `🟢 +${fmtStk(sharesAdded)} Stk ${sym} für ${fmt(spend)}${feeHint} (gekappt — nicht genug Cash Depot)`
-        : `🟢 +${fmtStk(sharesAdded)} Stk ${sym} (~${fmt(spend)}${feeHint})`;
-      showToast(msg);
+      const feeHint = feeEur + taxEur > 0 ? tr('toast.feesIncluded', { amount: fmt(feeEur + taxEur) }) : '';
+      showToast(
+        cappedByCash
+          ? tr('toast.buyCapped', { shares: fmtStk(sharesAdded), sym, amount: fmt(spend), fees: feeHint })
+          : tr('toast.buyDone', { shares: fmtStk(sharesAdded), sym, amount: fmt(spend), fees: feeHint }),
+      );
       return;
     }
     const held = portfolioShares[sym] ?? 0;
     const sold = Math.min(n, held);
     if (sold <= 0) {
-      showToast('Nichts zu verkaufen (0 Stück).', 'error');
+      showToast(tr('toast.nothingToSell'), 'error');
       return;
     }
     const capped = sold < n - 1e-12;
     const proceeds = roundEUR(sold * px);
     const netProceeds = roundEUR(proceeds - feeEur - taxEur);
     if (netProceeds < -0.001) {
-      showToast('Gebühr + Steuer übersteigen den Verkaufserlös.', 'error');
+      showToast(tr('toast.feesExceedProceeds'), 'error');
       return;
     }
     const fullySold = opts?.sellAll === true && !capped && held - sold <= 1e-12;
@@ -3477,7 +3477,7 @@ export default function AllWin() {
     setTradeAmount('');
     setTradeFeeStr('');
     setTradeTaxStr('');
-    const feeHint = feeEur + taxEur > 0 ? ` (netto ${fmt(netProceeds)} nach Gebühr/Steuer)` : '';
+    const feeHint = feeEur + taxEur > 0 ? tr('toast.netAfterFees', { amount: fmt(netProceeds) }) : '';
     let baselineExcluded = false;
     if (fullySold && isBase) {
       const hypotheticalExcluded = Array.from(new Set([...portfolioExcludedBaseSyms, sym]));
@@ -3495,14 +3495,15 @@ export default function AllWin() {
         setPortfolioExcludedBaseSyms((prev) => (prev.includes(sym) ? prev : [...prev, sym]));
       }
     }
+    const sellVars = { shares: fmtStk(sold), sym, amount: fmt(netProceeds), fees: feeHint, max: capped ? tr('toast.sellMaxHeld') : '' };
     showToast(
       fullySold && !isBase
-        ? `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(netProceeds)}${feeHint} — Titel wurde entfernt`
+        ? tr('toast.sellRemoved', sellVars)
         : fullySold && isBase && baselineExcluded
-          ? `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(netProceeds)}${feeHint} — unter Portfolio ausgeblendet`
+          ? tr('toast.sellHidden', sellVars)
           : fullySold && isBase
-            ? `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(netProceeds)}${feeHint} · Ausblendung nicht möglich (letzter sichtbarer Standard-Titel); Live unverändert`
-            : `🔴 ${fmtStk(sold)} Stk ${sym} · +${fmt(netProceeds)}${feeHint} ins Cash Depot${capped ? ' (max. Bestand)' : ''}`,
+            ? tr('toast.sellBaselineBlocked', sellVars)
+            : tr('toast.sellDone', sellVars),
     );
   };
 
@@ -3529,13 +3530,13 @@ export default function AllWin() {
   const deletePortfolioTrade = (id: string) => {
     const t = portfolioTrades.find((x) => x.id === id);
     if (!t) return;
-    if (!window.confirm('Diese Depot-Buchung löschen? Bestand und Cash Depot werden entsprechend angepasst.')) return;
+    if (!window.confirm(tr('common.confirmDeleteDepotTrade'))) return;
     const { shares, cash } = reverseTradeOnPortfolio(t, portfolioShares, portfolioBrokerCash);
     setPortfolioShares(shares);
     setPortfolioBrokerCash(cash);
     setPortfolioTrades((prev) => prev.filter((x) => x.id !== id));
     if (editingTradeId === id) cancelEditPortfolioTrade();
-    showToast('Depot-Buchung gelöscht.');
+    showToast(tr('toast.depotBookingDeleted'));
   };
 
   const saveEditedPortfolioTrade = () => {
@@ -3544,11 +3545,11 @@ export default function AllWin() {
     const amount = parseFloat(tradeEditAmount.replace(/\s/g, '').replace(',', '.'));
     const price = parseFloat(tradeEditPrice.replace(/\s/g, '').replace(',', '.'));
     if (Number.isNaN(amount) || amount <= 0) {
-      showToast('Bitte gültige Stückzahl eingeben.', 'error');
+      showToast(tr('toast.invalidSharesShort'), 'error');
       return;
     }
     if (Number.isNaN(price) || price <= 0) {
-      showToast('Bitte gültigen Kurs je Stück eingeben.', 'error');
+      showToast(tr('toast.invalidPrice'), 'error');
       return;
     }
     const feeEur = parseEuroInput(tradeEditFeeStr);
@@ -3574,7 +3575,7 @@ export default function AllWin() {
     setPortfolioBrokerCash(app.cash);
     setPortfolioTrades((prev) => prev.map((t) => (t.id === old.id ? updated : t)));
     cancelEditPortfolioTrade();
-    showToast('Depot-Buchung aktualisiert ✅');
+    showToast(tr('toast.depotBookingUpdated'));
   };
 
   const resetMoneyForm = () => {
@@ -3598,16 +3599,16 @@ export default function AllWin() {
     e.target.value = '';
     if (!file) return;
     if (!BILLING_API) {
-      showToast('Backend nicht erreichbar — Billing-Server / VITE_BILLING_API_URL prüfen.', 'error');
+      showToast(tr('toast.backendUnreachable'), 'error');
       return;
     }
     if (!authToken) {
-      showToast('Bitte anmelden, um Kassenzettel zu scannen.', 'error');
+      showToast(tr('toast.loginForReceipt'), 'error');
       return;
     }
     setReceiptScanning(true);
     try {
-      const { base64, mimeType } = await compressReceiptImageFile(file);
+      const { base64, mimeType } = await compressReceiptImageFile(file, locale);
       const res = await fetch(`${BILLING_API}/api/receipt/scan`, {
         method: 'POST',
         headers: {
@@ -3628,12 +3629,12 @@ export default function AllWin() {
         };
       };
       if (!res.ok) {
-        showToast(data?.error || 'Scan fehlgeschlagen.', 'error');
+        showToast(data?.error || tr('toast.scanFailed'), 'error');
         return;
       }
       const s = data.suggestion;
       if (!s?.amount) {
-        showToast('Keine Buchungsdaten erkannt.', 'error');
+        showToast(tr('toast.noReceiptData'), 'error');
         return;
       }
       const cat = s.category && CATS.ausgaben.includes(s.category) ? s.category : 'Sonstiges';
@@ -3653,10 +3654,10 @@ export default function AllWin() {
       setMoneyFormOpen(true);
       scrollToMoneyForm();
       const conf =
-        s.confidence === 'high' ? 'sicher' : s.confidence === 'low' ? 'unsicher — bitte prüfen' : 'plausibel';
-      showToast(`Kassenzettel erkannt (${conf}). Daten prüfen und speichern.`, s.confidence === 'low' ? 'error' : 'success');
+        s.confidence === 'high' ? tr('common.receiptConfHigh') : s.confidence === 'low' ? tr('common.receiptConfLow') : tr('common.receiptConfMid');
+      showToast(tr('toast.receiptRecognized', { conf }), s.confidence === 'low' ? 'error' : 'success');
     } catch {
-      showToast('Beleg konnte nicht gelesen werden — anderes Foto versuchen.', 'error');
+      showToast(tr('toast.receiptUnreadable'), 'error');
     } finally {
       setReceiptScanning(false);
     }
@@ -3665,7 +3666,7 @@ export default function AllWin() {
   const deleteTx = async (id: number) => {
     const tx = transactions.find((t) => t.id === id);
     if (!tx) return;
-    if (!window.confirm('Diese Buchung wirklich löschen?')) return;
+    if (!window.confirm(tr('common.confirmDeleteBooking'))) return;
     const rev = reverseTxSideEffects(tx, debts, notgroschenBalance, portfolioBrokerCash);
     const nextTx = transactions.filter((t) => t.id !== id);
     if (authUser?.id) markTxDeleted(authUser.id, id);
@@ -3686,7 +3687,7 @@ export default function AllWin() {
       { replaceTransactions: true, replaceDebts: true },
     );
     if (editingTxId === id) resetMoneyForm();
-    showToast(ok ? 'Buchung gelöscht.' : 'Lokal gelöscht — Cloud-Sync fehlgeschlagen. Bitte erneut versuchen.', ok ? 'success' : 'error');
+    showToast(ok ? tr('toast.bookingDeleted') : tr('toast.bookingDeletedLocal'), ok ? 'success' : 'error');
   };
 
   const scrollToMoneyForm = useCallback(() => {
@@ -3715,7 +3716,7 @@ export default function AllWin() {
       taxStr: typeof tx.taxEur === 'number' && tx.taxEur > 0 ? String(tx.taxEur).replace('.', ',') : '',
     });
     scrollToMoneyForm();
-    showToast('Buchung geladen — anpassen und speichern.', 'success');
+    showToast(tr('toast.bookingLoaded'), 'success');
   };
 
   const addTx = () => {
@@ -3729,7 +3730,7 @@ export default function AllWin() {
 
     if (form.currency !== baseCurrency) {
       if (!Number.isFinite(fxBasePerUnit) || fxBasePerUnit <= 0) {
-        showToast(fxError || 'Wechselkurs noch nicht geladen — bitte kurz warten.', 'error');
+        showToast(fxError || tr('toast.fxNotLoaded'), 'error');
         return;
       }
       foreignAmount = Math.round(rawAmt * 100) / 100;
@@ -3743,7 +3744,7 @@ export default function AllWin() {
     const feeEur = parseEuroInput(form.feeStr);
     const taxEur = parseEuroInput(form.taxStr);
     if (form.type === 'einnahme' && form.category === 'Dividende' && amt - feeEur - taxEur < -0.001) {
-      showToast('Gebühr + Steuer dürfen den Bruttobetrag nicht übersteigen.', 'error');
+      showToast(tr('toast.feesExceedGross'), 'error');
       return;
     }
 
@@ -3753,10 +3754,7 @@ export default function AllWin() {
     let workBroker = portfolioBrokerCash;
 
     if (form.type === 'ausgabe' && form.category === 'Notgroschen' && form.paymentMethod === 'Notgroschen') {
-      showToast(
-        'Kategorie „Notgroschen“ = Einzahlung aufs Polster. Zahlung aus dem Polster: andere Kategorie wählen und Zahlungsart „Notgroschen“.',
-        'error',
-      );
+      showToast(tr('toast.emergencyCategoryConflict'), 'error');
       return;
     }
     if (oldTx) {
@@ -3768,24 +3766,21 @@ export default function AllWin() {
 
     const activeForLink = workDebts.filter((d) => d.remaining > 0);
     if (form.type === 'ausgabe' && form.category === 'Kreditrate' && activeForLink.length > 0 && !form.linkedDebtId) {
-      showToast('Bitte eine Schuld unter Boost auswählen (oder Kategorie ändern).', 'error');
+      showToast(tr('toast.selectDebt'), 'error');
       return;
     }
 
     if (form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen' && amt > workNg + 0.0001) {
-      showToast(`Im Notgroschen sind nur noch ${fmtMoney(workNg)} verfügbar.`, 'error');
+      showToast(tr('toast.emergencyInsufficient', { amount: fmtMoney(workNg) }), 'error');
       return;
     }
     if (form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot' && amt > workBroker + 0.0001) {
-      showToast(`Im Cash Depot sind nur noch ${fmtMoney(workBroker)} verfügbar.`, 'error');
+      showToast(tr('toast.cashDepotInsufficient', { amount: fmtMoney(workBroker) }), 'error');
       return;
     }
 
     if (form.type === 'ausgabe' && form.category === 'Notgroschen' && form.paymentMethod === 'Einzahlung Cash Depot') {
-      showToast(
-        '„Einzahlung Cash Depot“ bucht ins Broker-Cash (LevelUp). Für den Notgroschen auf Home andere Zahlungsart wählen — oder zwei getrennte Buchungen.',
-        'error',
-      );
+      showToast(tr('toast.cashDepotDepositConflict'), 'error');
       return;
     }
 
@@ -3796,7 +3791,7 @@ export default function AllWin() {
       const did = parseInt(form.linkedDebtId, 10);
       const dRow = workDebts.find((d) => d.id === did && d.remaining > 0);
       if (!dRow) {
-        showToast('Schuld nicht gefunden oder schon erledigt.', 'error');
+        showToast(tr('toast.debtNotFound'), 'error');
         return;
       }
       linkedDebtId = did;
@@ -3887,61 +3882,64 @@ export default function AllWin() {
       { replaceTransactions: true, replaceDebts: true },
     ).then((ok) => {
       if (!ok && authToken) {
-        showToast('Lokal gespeichert — Cloud-Sync fehlgeschlagen. Bitte kurz warten und erneut speichern.', 'error');
+        showToast(tr('toast.savedLocalSyncFailed'), 'error');
       }
     });
     const wasEdit = editingTxId != null;
     resetMoneyForm();
 
     if (form.type === 'ausgabe' && form.category === 'Kreditrate' && linkedDebtId != null && linkedDebtName && tilgRestAfter !== undefined) {
-      const ngSuffix =
-        form.paymentMethod === 'Notgroschen' && notgroAfterDebit !== undefined ? ` · Notgroschen-Stand: ${fmt(notgroAfterDebit)}` : '';
-      const cdSuffix =
-        form.paymentMethod === 'Cash Depot' && brokerCashAfterSpend !== undefined ? ` · Cash Depot: ${fmt(brokerCashAfterSpend)}` : '';
-      const einSuffix =
-        form.paymentMethod === 'Einzahlung Cash Depot' && brokerCashAfterEinzahlung !== undefined
-          ? ` · Cash Depot: ${fmt(brokerCashAfterEinzahlung)}`
-          : '';
+      const suffixParts: string[] = [];
+      if (form.paymentMethod === 'Notgroschen' && notgroAfterDebit !== undefined) {
+        suffixParts.push(tr('toast.notgroschenSuffix', { amount: fmt(notgroAfterDebit) }));
+      }
+      if (form.paymentMethod === 'Cash Depot' && brokerCashAfterSpend !== undefined) {
+        suffixParts.push(tr('toast.cashDepotSuffix', { amount: fmt(brokerCashAfterSpend) }));
+      }
+      if (form.paymentMethod === 'Einzahlung Cash Depot' && brokerCashAfterEinzahlung !== undefined) {
+        suffixParts.push(tr('toast.cashDepotSuffix', { amount: fmt(brokerCashAfterEinzahlung) }));
+      }
+      const suffix = suffixParts.join('');
       if (tilgRestAfter === 0) {
-        showToast(`🏆 „${linkedDebtName}“ abbezahlt — Boost-Archiv!${ngSuffix}${cdSuffix}${einSuffix}`, 'level');
+        showToast(tr('toast.debtPaidOff', { name: linkedDebtName, suffix }), 'level');
       } else {
-        showToast(`✅ Tilgung ${fmtMoney(amt)} für „${linkedDebtName}“ — Rest ${fmtMoney(tilgRestAfter)}${ngSuffix}${cdSuffix}${einSuffix}`);
+        showToast(tr('toast.debtPayment', { amount: fmtMoney(amt), name: linkedDebtName, rest: fmtMoney(tilgRestAfter), suffix }));
       }
     } else if (form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen' && notgroAfterDebit !== undefined) {
-      showToast(`🛡️ −${fmtMoney(amt)} aus Notgroschen — Stand jetzt ${fmt(notgroAfterDebit)}`);
+      showToast(tr('toast.emergencyDebited', { amount: fmtMoney(amt), balance: fmt(notgroAfterDebit) }));
     } else if (form.type === 'ausgabe' && form.category === 'Notgroschen' && notgroNewBal !== undefined) {
-      const msg =
+      showToast(
         form.paymentMethod === 'Cash Depot' && brokerCashAfterSpend !== undefined
-          ? `🛡️ +${fmtMoney(amt)} auf Notgroschen (aus Cash Depot) — NG ${fmt(notgroNewBal)} · Cash ${fmt(brokerCashAfterSpend)}`
-          : `🛡️ +${fmtMoney(amt)} auf Notgroschen — Stand jetzt ${fmt(notgroNewBal)}`;
-      showToast(msg);
+          ? tr('toast.emergencyCreditedCash', {
+              amount: fmtMoney(amt),
+              ng: fmt(notgroNewBal),
+              cash: fmt(brokerCashAfterSpend),
+            })
+          : tr('toast.emergencyCredited', { amount: fmtMoney(amt), balance: fmt(notgroNewBal) }),
+      );
     } else if (
       form.type === 'ausgabe' &&
       form.paymentMethod === 'Cash Depot' &&
       brokerCashAfterSpend !== undefined &&
       !(form.category === 'Notgroschen' && form.paymentMethod === 'Cash Depot')
     ) {
-      showToast(`💎 −${fmtMoney(amt)} aus Cash Depot — Stand jetzt ${fmt(brokerCashAfterSpend)}`);
+      showToast(tr('toast.cashDepotDebited', { amount: fmtMoney(amt), balance: fmt(brokerCashAfterSpend) }));
     } else if (form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot' && brokerCashAfterEinzahlung !== undefined) {
-      showToast(`💎 +${fmtMoney(amt)} ins Cash Depot eingezahlt — Stand jetzt ${fmt(brokerCashAfterEinzahlung)}`);
+      showToast(tr('toast.cashDepotCredited', { amount: fmtMoney(amt), balance: fmt(brokerCashAfterEinzahlung) }));
     } else if (form.type === 'einnahme' && form.category === 'Dividende' && brokerCashAfterDividend !== undefined) {
       const net = Math.round((amt - feeEur - taxEur) * 100) / 100;
-      const feeHint = feeEur + taxEur > 0 ? ` (netto ${fmtMoney(net)} nach Gebühr/Steuer)` : '';
-      showToast(`💸 Dividende gebucht${feeHint} — Cash Depot jetzt ${fmt(brokerCashAfterDividend)}`);
+      const feeHint = feeEur + taxEur > 0 ? tr('toast.dividendNetFees', { amount: fmtMoney(net) }) : '';
+      showToast(tr('toast.dividendBooked', { fees: feeHint, balance: fmt(brokerCashAfterDividend) }));
     } else {
-      let msg = wasEdit
-        ? '✏️ Buchung aktualisiert!'
-        : form.type === 'einnahme'
-          ? '💰 Einnahme gespeichert!'
-          : '✅ Ausgabe gespeichert!';
+      let msg = wasEdit ? tr('toast.bookingUpdated') : form.type === 'einnahme' ? tr('toast.incomeSaved') : tr('toast.expenseSaved');
       if (!wasEdit && form.type === 'ausgabe' && form.category === 'Kreditrate' && activeForLink.length === 0) {
-        msg += ' Hinweis: In Boost eine Schuld anlegen, dann Tilgung hier zuordnen.';
+        msg += tr('toast.debtLinkHint');
       }
       if (!wasEdit && form.type === 'ausgabe' && FIXKOST_CATEGORIES.has(form.category)) {
-        msg += ' In „Laufende Fixkosten“ siehst du den letzten Betrag je Position.';
+        msg += tr('toast.fixedCostHint');
       }
       if (!wasEdit && form.type === 'ausgabe' && VAR_KOST_CATEGORIES.has(form.category)) {
-        msg += ' Unter „Variable Kosten“ siehst du den letzten Betrag je Kategorie + Notiz.';
+        msg += tr('toast.variableCostHint');
       }
       showToast(msg);
     }
@@ -3953,7 +3951,7 @@ export default function AllWin() {
       prev.map((d) => {
         if (d.id !== id) return d;
         const newR = Math.max(0, d.remaining - d.monthly);
-        if (newR === 0) showToast(`🏆 „${d.name}“ abbezahlt — liegt jetzt im Archiv!`, 'level');
+        if (newR === 0) showToast(tr('toast.debtArchived', { name: d.name }), 'level');
         return newR === 0 ? { ...d, remaining: 0, archivedAt: d.archivedAt ?? stamp } : { ...d, remaining: newR };
       }),
     );
@@ -3976,7 +3974,7 @@ export default function AllWin() {
       prev.map((d) => {
         if (d.id !== id) return d;
         if (d.remaining <= 0) return d;
-        showToast(`🏆 „${d.name}“ abgeschlossen — Archiv!`, 'level');
+        showToast(tr('toast.debtSettled', { name: d.name }), 'level');
         return { ...d, remaining: 0, archivedAt: d.archivedAt ?? stamp };
       }),
     );
@@ -4021,19 +4019,19 @@ export default function AllWin() {
     const interestRaw = newDebtInterest.replace(/\s/g, '').replace(',', '.');
     const interest = interestRaw === '' ? 0 : parseFloat(interestRaw);
     if (!name) {
-      showToast('Bitte einen Namen eingeben.', 'error');
+      showToast(tr('toast.enterName'), 'error');
       return;
     }
     if (Number.isNaN(total) || total <= 0) {
-      showToast('Gesamtbetrag fehlt oder ungültig.', 'error');
+      showToast(tr('toast.invalidTotal'), 'error');
       return;
     }
     if (Number.isNaN(monthly) || monthly < 0) {
-      showToast('Monatsrate ungültig.', 'error');
+      showToast(tr('toast.invalidMonthly'), 'error');
       return;
     }
     if (Number.isNaN(interest) || interest < 0) {
-      showToast('Zinssatz ungültig.', 'error');
+      showToast(tr('toast.invalidInterest'), 'error');
       return;
     }
     const nextInterest = Math.round(interest * 100) / 100;
@@ -4041,7 +4039,7 @@ export default function AllWin() {
     const nextTotal = Math.round(total * 100) / 100;
     const parsedProperty = newDebtKind === 'house' ? parseDebtPropertyValueInput() : undefined;
     if (parsedProperty === 'invalid') {
-      showToast('Marktwert der Immobilie ungültig.', 'error');
+      showToast(tr('toast.invalidPropertyValue'), 'error');
       return;
     }
     if (editingDebtId != null) {
@@ -4061,7 +4059,7 @@ export default function AllWin() {
               },
         ),
       );
-      showToast(`Schuld „${name}“ aktualisiert.`, 'success');
+      showToast(tr('toast.debtUpdated', { name }), 'success');
       resetDebtForm();
       return;
     }
@@ -4079,7 +4077,7 @@ export default function AllWin() {
         ...(newDebtKind === 'house' && parsedProperty != null ? { propertyValue: parsedProperty } : {}),
       },
     ]);
-    showToast(`Schuld „${name}“ aufgenommen! ⚡`);
+    showToast(tr('toast.debtAdded', { name }));
     resetDebtForm();
   };
 
@@ -4122,7 +4120,7 @@ export default function AllWin() {
       }
       setAuthToken(data.token);
       setAuthUser(data.user);
-      showToast(`Willkommen, ${data.user?.name || 'User'}!`);
+      showToast(tr('toast.welcomeUser', { name: data.user?.name || 'User' }));
     } catch {
       setAuthError(
         `Server nicht erreichbar (${BILLING_API}). Railway-URL im Browser testen: ${BILLING_API}/api/auth/me — Service aktiv? VITE_BILLING_API_URL auf Vercel = https://…`,
@@ -4134,7 +4132,7 @@ export default function AllWin() {
     setAuthToken(token);
     setAuthUser(user);
     setAuthError('');
-    showToast(`Willkommen, ${user?.name || 'Champion'}!`);
+    showToast(tr('toast.welcomeUser', { name: user?.name || 'Champion' }));
   };
 
   const handleGoogleToken = async (idToken: string) => {
@@ -4146,14 +4144,12 @@ export default function AllWin() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setAuthError(data?.error || 'Google Login fehlgeschlagen.');
+        setAuthError(data?.error || tr('auth.googleLoginFailed'));
         return;
       }
       finishSocialAuth(data.token, data.user);
     } catch {
-      setAuthError(
-        'Google Login nicht erreichbar. Billing mit npm run dev:billing starten. Bei Zugriff über WLAN-/Netzwerk-IP: VITE_BILLING_API_URL in .env.local leer lassen (Proxy /api).',
-      );
+      setAuthError(tr('auth.googleUnreachable'));
     }
   };
 
@@ -4234,7 +4230,7 @@ export default function AllWin() {
     if (!authToken || !authUser) return;
     const name = profileNameDraft.trim();
     if (name.length < 2) {
-      showToast('Name zu kurz (min. 2 Zeichen).', 'error');
+      showToast(tr('toast.nameTooShort'), 'error');
       return;
     }
     setProfileSaving(true);
@@ -4249,13 +4245,13 @@ export default function AllWin() {
       });
       const data = await res.json();
       if (!res.ok) {
-        showToast(data?.error || 'Name konnte nicht gespeichert werden.', 'error');
+        showToast(data?.error || tr('toast.nameSaveFailed'), 'error');
         return;
       }
       setAuthUser(data.user);
-      showToast('Nutzername aktualisiert ✅');
+      showToast(tr('toast.nameUpdated'));
     } catch {
-      showToast('Profil-Update fehlgeschlagen.', 'error');
+      showToast(tr('toast.profileUpdateFailed'), 'error');
     } finally {
       setProfileSaving(false);
     }
@@ -4263,12 +4259,12 @@ export default function AllWin() {
 
   const submitFeedback = async () => {
     if (!authToken || !BILLING_API) {
-      showToast('Bitte einloggen, um Feedback zu senden.', 'error');
+      showToast(tr('toast.loginForFeedback'), 'error');
       return;
     }
     const message = feedbackMessage.trim();
     if (message.length < 8) {
-      showToast('Bitte etwas ausführlicher schreiben (min. 8 Zeichen).', 'error');
+      showToast(tr('toast.feedbackTooShort'), 'error');
       return;
     }
     setFeedbackSending(true);
@@ -4283,13 +4279,13 @@ export default function AllWin() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast(typeof data?.error === 'string' ? data.error : 'Feedback konnte nicht gesendet werden.', 'error');
+        showToast(typeof data?.error === 'string' ? data.error : tr('toast.feedbackFailed'), 'error');
         return;
       }
       setFeedbackMessage('');
-      showToast('Danke! Dein Feedback ist angekommen. 🙏');
+      showToast(tr('toast.feedbackThanks'));
     } catch {
-      showToast('Server nicht erreichbar — bitte später erneut versuchen.', 'error');
+      showToast(tr('toast.serverUnreachable'), 'error');
     } finally {
       setFeedbackSending(false);
     }
@@ -4300,17 +4296,17 @@ export default function AllWin() {
     if (!normalized) return;
     if (normalized === 'CLEVERPRO' || normalized === 'ALLWINPRO') {
       setSub((prev) => ({ ...prev, tier: 'pro' }));
-      showToast(`Code eingelöst: ${PRICING.pro.name} freigeschaltet! 🚀`);
+      showToast(tr('toast.codeRedeemedPro', { plan: PRICING.pro.name }));
       setRedeemCode('');
       return;
     }
     if (normalized === 'CLEVERELITE' || normalized === 'ALLWINELITE') {
       setSub((prev) => ({ ...prev, tier: 'elite' }));
-      showToast(`Code eingelöst: ${PRICING.elite.name} freigeschaltet! 👑`);
+      showToast(tr('toast.codeRedeemedElite', { plan: PRICING.elite.name }));
       setRedeemCode('');
       return;
     }
-    showToast('Ungültiger Code. Bitte prüfen.', 'error');
+    showToast(tr('toast.invalidCode'), 'error');
   };
 
   useEffect(() => {
@@ -4429,7 +4425,7 @@ export default function AllWin() {
   const changePlan = async (tier: SubscriptionTier) => {
     if (tier === 'free') {
       setSub((prev) => ({ ...prev, tier: 'free' }));
-      showToast(`Auf ${PRICING.free.name} umgestellt.`, 'success');
+      showToast(tr('toast.switchedToFree', { plan: PRICING.free.name }), 'success');
       return;
     }
     setUpgradeLoading(true);
@@ -4441,12 +4437,12 @@ export default function AllWin() {
       });
       const data = await res.json();
       if (!res.ok || !data?.url) {
-        showToast(data?.error || 'Checkout konnte nicht gestartet werden.', 'error');
+        showToast(data?.error || tr('toast.checkoutFailed'), 'error');
         return;
       }
       window.location.href = data.url;
     } catch {
-      showToast('Billing-Server nicht erreichbar.', 'error');
+      showToast(tr('toast.billingUnreachable'), 'error');
     } finally {
       setUpgradeLoading(false);
     }
@@ -4585,7 +4581,7 @@ export default function AllWin() {
         border: `1px solid ${awBg.line}`,
       }}
     >
-      <div style={{ fontSize: 11, fontWeight: 800, color: '#c9d1d9', marginBottom: 8 }}>Neues Instrument</div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: '#c9d1d9', marginBottom: 8 }}>{tr('levelup.newInstrument')}</div>
       {wlAddSym.trim() ? (
         <div
           style={{
@@ -4606,35 +4602,23 @@ export default function AllWin() {
               {wlAddName.trim() || sanitizeWatchlistSymbol(wlAddSym) || wlAddSym.trim()}
             </div>
             <div style={{ fontSize: 10, color: '#8b949e', marginTop: 2 }}>
-              {wlAddKind === 'crypto' ? 'Krypto' : 'Aktie / ETF'}
+              {wlAddKind === 'crypto' ? tr('common.crypto') : tr('common.stockEtf')}
               {sanitizeWatchlistSymbol(wlAddSym) ? ` · ${sanitizeWatchlistSymbol(wlAddSym)}` : ''}
             </div>
           </div>
         </div>
       ) : null}
       <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 10, lineHeight: 1.45 }}>
-        {opts?.watchlistOnly ? (
-          <>
-            Nur Beobachtung unter <strong style={{ color: '#c9d1d9' }}>Live Marktdaten</strong> — Live-Kurs vom Server, kein Eintrag unter
-            Portfolio Power / Order. <strong style={{ color: '#c9d1d9' }}>Börsen-Kürzel oder ISIN</strong> — ISIN wird automatisch
-            zum Kürzel + Namen aufgelöst.
-          </>
-        ) : (
-          <>
-            <strong style={{ color: '#c9d1d9' }}>Börsen-Kürzel oder ISIN</strong> + Art wählen (z. B.{' '}
-            <strong style={{ color: '#c9d1d9' }}>AAPL</strong>, <strong style={{ color: '#c9d1d9' }}>SAP.DE</strong>, oder ISIN vom
-            Depotauszug). ISIN wird automatisch zum Kürzel und Anzeigenamen aufgelöst.
-          </>
-        )}
+        {opts?.watchlistOnly ? tr('common.watchlistOnlyHint') : tr('common.instrumentAddHint')}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 8, alignItems: 'flex-end' }}>
         <div style={{ flex: '1 1 90px', minWidth: 80 }}>
           <label style={{ fontSize: 10, color: '#8b949e', fontWeight: 600, display: 'block', marginBottom: 4 }}>
-            Börsen-Kürzel oder ISIN
+            {tr('common.tickerOrIsin')}
           </label>
           <input
             style={{ ...S.input, marginTop: 0 }}
-            placeholder="z. B. AAPL, SAP.DE oder ISIN"
+            placeholder={tr('common.tickerPlaceholder')}
             autoCapitalize="characters"
             value={wlAddSym}
             onChange={(e) => setWlAddSym(e.target.value)}
@@ -4642,11 +4626,11 @@ export default function AllWin() {
         </div>
         <div style={{ flex: '1 1 100px', minWidth: 90 }}>
           <label style={{ fontSize: 10, color: '#8b949e', fontWeight: 600, display: 'block', marginBottom: 4 }}>
-            Anzeigename (optional)
+            {tr('common.displayNameOptional')}
           </label>
           <input
             style={{ ...S.input, marginTop: 0 }}
-            placeholder="z. B. Apple"
+            placeholder={tr('common.displayNamePlaceholder')}
             value={wlAddName}
             onChange={(e) => setWlAddName(e.target.value)}
           />
@@ -4656,8 +4640,8 @@ export default function AllWin() {
           value={wlAddKind}
           onChange={(e) => setWlAddKind(e.target.value === 'crypto' ? 'crypto' : 'stock')}
         >
-          <option value="stock">Aktie / ETF</option>
-          <option value="crypto">Krypto</option>
+          <option value="stock">{tr('common.stockEtf')}</option>
+          <option value="crypto">{tr('common.crypto')}</option>
         </select>
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' as const }}>
@@ -4667,10 +4651,10 @@ export default function AllWin() {
           disabled={wlAddLoading}
           onClick={() => void addWatchlistInstrument({ watchlistOnly: opts?.watchlistOnly === true })}
         >
-          {wlAddLoading ? 'Wird aufgelöst…' : 'Hinzufügen'}
+          {wlAddLoading ? tr('common.resolving') : tr('common.add')}
         </button>
         <button type="button" style={{ ...S.chip(false), marginTop: 0 }} onClick={onCancel}>
-          Abbrechen
+          {tr('common.cancel')}
         </button>
       </div>
     </div>
@@ -4678,9 +4662,9 @@ export default function AllWin() {
 
   const renderPortfolioAllocation = (showTrading: boolean) => (
     <div style={{ marginTop: 14 }}>
-      <div style={{ ...S.label, fontSize: 11, marginBottom: 8, color: '#8b949e' }}>📍 Investiert nach Watchlist</div>
+      <div style={{ ...S.label, fontSize: 11, marginBottom: 8, color: '#8b949e' }}>{tr('levelup.investedByWatchlist')}</div>
       <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 10, lineHeight: 1.45 }}>
-        Eigene Aktien/Krypto: <strong style={{ color: '#c9d1d9' }}>✕</strong> entfernt das Symbol komplett (auch Live). Standardtitel der App: <strong style={{ color: '#c9d1d9' }}>✕</strong> nur bei <strong style={{ color: '#c9d1d9' }}>0 Stk</strong> — blendet sie unter Portfolio und Order aus (Live bleibt). Zurück: „Alle Standard-Titel wieder einblenden“.
+        {tr('common.portfolioRemoveHint')}
       </div>
       {tradableMarket.map((m) => {
         const stk = portfolioShares[m.sym] ?? 0;
@@ -4702,7 +4686,7 @@ export default function AllWin() {
                     </div>
                   ) : null}
                   <div style={{ fontSize: 10, color: '#8b949e', marginTop: 2 }}>
-                    Kurs <strong style={{ color: '#c9d1d9' }}>{fmt(m.price)}</strong>/Stk ·{' '}
+                    {tr('common.course')} <strong style={{ color: '#c9d1d9' }}>{fmt(m.price)}</strong>{tr('common.perShareShort')} ·{' '}
                     <span style={{ color: m.change >= 0 ? '#2563eb' : '#ff7b7b', fontWeight: 600 }}>
                       {m.change >= 0 ? '+' : ''}
                       {m.change.toFixed(2)}%
@@ -4776,16 +4760,16 @@ export default function AllWin() {
           style={{ ...S.chip(false), marginTop: 8, marginBottom: 6, fontSize: 11, fontWeight: 600 }}
           onClick={() => {
             setPortfolioExcludedBaseSyms([]);
-            showToast('Standard-Titel wieder in Portfolio Power & Order sichtbar.');
+            showToast(tr('toast.baselineRestored'));
           }}
         >
-          Alle Standard-Titel wieder einblenden
+          {tr('common.restoreBaseline')}
         </button>
       ) : null}
       <div style={{ fontSize: 10, color: '#7d8590', marginTop: 6, lineHeight: 1.45 }}>
         {showTrading ? (
           <>
-            Orders in <span style={{ fontWeight: 700, color: '#e6edf3' }}>Stückzahl</span>. Kauf zieht vom <span style={{ fontWeight: 700, color: '#e6edf3' }}>Cash Depot</span> zum Marktkurs; Verkauf bucht den Erlös ins Cash Depot. Portfolio in € = Positionen + Cash Depot.
+            {tr('common.orderSharesHint')}
           </>
         ) : (
           <>
@@ -4797,13 +4781,13 @@ export default function AllWin() {
       {showTrading && (
         <>
           <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${awBg.cardBorder}` }}>
-            <div style={{ ...S.label, fontSize: 11, marginBottom: 8, color: '#8b949e' }}>🛒 Order in Stückzahl</div>
+            <div style={{ ...S.label, fontSize: 11, marginBottom: 8, color: '#8b949e' }}>{tr('levelup.orderInShares')}</div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
               <button type="button" style={{ ...S.chip(tradeMode === 'buy'), flex: 1, marginTop: 0 }} onClick={() => setTradeMode('buy')}>
-                🟢 Kaufen / Nachkauf
+                {tr('levelup.buy')}
               </button>
               <button type="button" style={{ ...S.chip(tradeMode === 'sell'), flex: 1, marginTop: 0 }} onClick={() => setTradeMode('sell')}>
-                🔴 Verkaufen
+                {tr('levelup.sell')}
               </button>
             </div>
             <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 10, lineHeight: 1.4 }}>
@@ -4878,13 +4862,12 @@ export default function AllWin() {
                   );
                 })}
                 <option value={ADD_INSTRUMENT_SELECT_VALUE} style={{ fontWeight: 700 }}>
-                  + Neue Aktie / Krypto…
+                  {tr('common.newStockCrypto')}
                 </option>
               </select>
             ) : (
               <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, lineHeight: 1.5 }}>
-                <strong style={{ color: '#c9d1d9' }}>Neues Instrument anlegen.</strong> Börsen-Kürzel oder ISIN — wird automatisch
-                benannt. Danach wieder normal handeln; „Abbrechen“ = zurück zur Titelwahl.
+                <strong style={{ color: '#c9d1d9' }}>{tr('common.createInstrument')}</strong> {tr('common.createInstrumentHint')}
               </div>
             )}
             {orderInstrumentAddOpen && !levelUpLocked && !liveMarketAddOpen ? (
@@ -4900,34 +4883,34 @@ export default function AllWin() {
                 border: `1px solid ${awBg.line}`,
               }}
             >
-              <div style={{ ...S.label, fontSize: 10, marginBottom: 6, color: '#8b949e' }}>📒 Zu {tradeSym}</div>
+              <div style={{ ...S.label, fontSize: 10, marginBottom: 6, color: '#8b949e' }}>{tr('common.toSymbol', { sym: tradeSym })}</div>
               <div style={{ fontSize: 12, color: '#c9d1d9', lineHeight: 1.55 }}>
                 <div>
-                  <span style={{ color: '#7d8590' }}>Aktuell im Depot: </span>
-                  <strong>{fmtStk(orderSymLedger.held)}</strong> Stk
+                  <span style={{ color: '#7d8590' }}>{tr('common.currentlyInDepot')} </span>
+                  <strong>{fmtStk(orderSymLedger.held)}</strong> {tr('common.stk')}
                 </div>
                 <div>
-                  <span style={{ color: '#7d8590' }}>Live-Kurs: </span>
-                  <strong>{fmt(orderSymLedger.livePx)}</strong> je Stück
+                  <span style={{ color: '#7d8590' }}>{tr('common.livePrice')}: </span>
+                  <strong>{fmt(orderSymLedger.livePx)}</strong> {tr('common.perShare')}
                 </div>
                 {orderSymLedger.fifo.avgPerShare != null ? (
                   <div style={{ marginTop: 6 }}>
-                    <span style={{ color: '#7d8590' }}>Ø dein Kaufpreis (geschätzt aus Orders): </span>
-                    <strong>{fmt(orderSymLedger.fifo.avgPerShare)}</strong> je Stück
+                    <span style={{ color: '#7d8590' }}>{tr('common.avgBuyPrice')} </span>
+                    <strong>{fmt(orderSymLedger.fifo.avgPerShare)}</strong> {tr('common.perShare')}
                     <span style={{ color: '#7d8590' }}>
                       {' '}
-                      · gebuchte Restkostenbasis ~ <strong>{fmt(orderSymLedger.fifo.costEur)}</strong>
+                      {tr('common.costBasis')} <strong>{fmt(orderSymLedger.fifo.costEur)}</strong>
                     </span>
                   </div>
                 ) : (
                   <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                    Ø Kaufpreis erst nach Buchungen mit gespeichertem Kurspreis — neue Orders ab jetzt enthalten EUR/Stück.
+                    {tr('common.avgPriceLater')}
                   </div>
                 )}
               </div>
               {orderSymLedger.buysNewestFirst.length > 0 ? (
                 <>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: '#a855f7', marginTop: 10, marginBottom: 6 }}>Deine Käufe</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: '#a855f7', marginTop: 10, marginBottom: 6 }}>{tr('common.yourBuys')}</div>
                   <div style={{ maxHeight: 140, overflowY: 'auto' as const }}>
                     {orderSymLedger.buysNewestFirst.map((t) => {
                       const eu = tradeOrderEur(t);
@@ -4942,20 +4925,22 @@ export default function AllWin() {
                             color: '#c9d1d9',
                           }}
                         >
-                          <strong>{fmtStk(t.amount)}</strong> Stk gekauft
+                          <strong>{fmtStk(t.amount)}</strong> {tr('common.boughtShares')}
                           {ppu != null ? (
                             <>
-                              {' · Kaufpreis'}{' '}
-                              <strong>{fmt(ppu)}</strong>/Stk
+                              {' '}
+                              {tr('common.buyPrice')}{' '}
+                              <strong>{fmt(ppu)}</strong>{tr('common.perShareShort')}
                             </>
                           ) : null}
                           {eu != null ? (
                             <>
-                              {' · Summe '}
+                              {' '}
+                              {tr('common.sumLabel')}{' '}
                               <strong>{fmt(eu)}</strong>
                             </>
                           ) : (
-                            <> · Kurspreis nicht gespeichert</>
+                            <> {tr('common.priceNotStored')}</>
                           )}
                           <div style={{ fontSize: 10, color: '#7d8590', marginTop: 2 }}>{t.at}</div>
                         </div>
@@ -4964,7 +4949,7 @@ export default function AllWin() {
                   </div>
                 </>
               ) : (
-                <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8 }}>Noch keine Käufe über „Order ausführen“ für dieses Symbol.</div>
+                <div style={{ fontSize: 11, color: '#8b949e', marginTop: 8 }}>{tr('common.noBuysYet')}</div>
               )}
             </div>
             ) : null}
@@ -4974,14 +4959,14 @@ export default function AllWin() {
                   <input
                     style={{ ...S.input, flex: '1 1 120px', marginTop: 0, marginBottom: 0, minWidth: 0 }}
                     inputMode="decimal"
-                    placeholder="Stückzahl (z. B. 10 oder 0,25)"
+                    placeholder={tr('common.sharesPlaceholder')}
                     value={tradeAmount}
                     onChange={(e) => setTradeAmount(e.target.value)}
                   />
                   {tradeMode === 'sell' && orderSymLedger.held > 0 ? (
                     <button
                       type="button"
-                      title="Gesamten Depotbestand zu diesem Titel verkaufen"
+                      title={tr('common.sellAllTitle')}
                       style={{
                         ...S.chip(false),
                         marginTop: 0,
@@ -4998,7 +4983,7 @@ export default function AllWin() {
                       }}
                       onClick={() => submitPortfolioTrade({ sellAll: true })}
                     >
-                      Alles verkaufen
+                      {tr('common.sellAll')}
                     </button>
                   ) : null}
                 </div>
@@ -5006,27 +4991,27 @@ export default function AllWin() {
                   <input
                     style={{ ...S.input, flex: '1 1 100px', marginTop: 0, marginBottom: 0, minWidth: 0 }}
                     inputMode="decimal"
-                    placeholder="Gebühr € (optional)"
+                    placeholder={tr('common.feePlaceholder')}
                     value={tradeFeeStr}
                     onChange={(e) => setTradeFeeStr(normalizeMoneyDecimalInput(e.target.value))}
                   />
                   <input
                     style={{ ...S.input, flex: '1 1 100px', marginTop: 0, marginBottom: 0, minWidth: 0 }}
                     inputMode="decimal"
-                    placeholder="Steuer € (optional)"
+                    placeholder={tr('common.taxPlaceholder')}
                     value={tradeTaxStr}
                     onChange={(e) => setTradeTaxStr(normalizeMoneyDecimalInput(e.target.value))}
                   />
                 </div>
                 <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.4 }}>
-                  Grobe Planung: Ordergebühr und Steuer manuell — z. B. 1,00 oder 26,38. Kauf: zusätzlich zum Kurswert; Verkauf: vom Erlös abgezogen.
+                  {tr('common.orderFeeHint')}
                 </div>
                 <button
                   type="button"
                   style={{ ...S.btn(tradeMode === 'sell' ? '#cf222e' : undefined), marginTop: 0 }}
                   onClick={() => submitPortfolioTrade()}
                 >
-                  {tradeMode === 'buy' ? '✅ Order ausführen (Kauf)' : '✅ Order ausführen (Verkauf)'}
+                  {tradeMode === 'buy' ? tr('common.executeBuy') : tr('common.executeSell')}
                 </button>
               </>
             ) : null}
@@ -5052,14 +5037,14 @@ export default function AllWin() {
                 }}
               >
                 <div style={{ ...S.label, fontSize: 11, marginBottom: 0, color: '#8b949e' }}>
-                  📒 Depot-Buchungen ({portfolioTrades.length})
+                  {tr('levelup.depotBookings', { count: String(portfolioTrades.length) })}
                 </div>
                 <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700 }}>{levelUpTradesOpen ? '▼' : '▶'}</span>
               </button>
               {levelUpTradesOpen && (
                 <>
                   <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
-                    Alle Käufe/Verkäufe — prüfen, korrigieren oder löschen. Cash Depot und Bestand werden dabei angepasst.
+                    {tr('common.depotBookingsHint')}
                   </div>
                   <div
                     style={{
@@ -5073,8 +5058,8 @@ export default function AllWin() {
                       borderBottom: `1px solid ${awBg.cardBorder}`,
                     }}
                   >
-                    <span>Buchung</span>
-                    <span style={{ textAlign: 'right' }}>Aktion</span>
+                    <span>{tr('common.booking')}</span>
+                    <span style={{ textAlign: 'right' }}>{tr('common.action')}</span>
                   </div>
                   <div style={{ maxHeight: 280, overflowY: 'auto' as const, WebkitOverflowScrolling: 'touch' }}>
                     {portfolioTrades.map((t) => {
@@ -5100,26 +5085,26 @@ export default function AllWin() {
                               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
                                 <div style={{ minWidth: 0, flex: 1 }}>
                                   <div style={{ fontWeight: 800, fontSize: 13, color: t.kind === 'buy' ? '#58a6ff' : '#ff7b7b' }}>
-                                    {t.kind === 'buy' ? '🟢 Kauf' : '🔴 Verkauf'} · {t.sym}
+                                    {t.kind === 'buy' ? tr('common.tradeBuyLabel') : tr('common.tradeSellLabel')} · {t.sym}
                                   </div>
                                   <div style={{ fontSize: 12, color: '#e6edf3', marginTop: 4, lineHeight: 1.45 }}>
-                                    <strong>{fmtStk(t.amount)}</strong> Stk
+                                    <strong>{fmtStk(t.amount)}</strong> {tr('common.stk')}
                                     {ppu != null ? (
                                       <>
                                         {' '}
-                                        à <strong>{fmt(ppu)}</strong>
+                                        {tr('common.perShareAt')} <strong>{fmt(ppu)}</strong>
                                       </>
                                     ) : null}
                                     {eu != null ? (
                                       <>
                                         {' '}
-                                        · Summe <strong>{fmt(eu)}</strong>
+                                        {tr('common.sumLabel')} <strong>{fmt(eu)}</strong>
                                       </>
                                     ) : null}
                                     {(t.feeEur ?? 0) + (t.taxEur ?? 0) > 0 ? (
                                       <span style={{ color: '#8b949e' }}>
                                         {' '}
-                                        · Gebühr/Steuer {fmt((t.feeEur ?? 0) + (t.taxEur ?? 0))}
+                                        {tr('common.feeTaxLabel', { amount: fmt((t.feeEur ?? 0) + (t.taxEur ?? 0)) })}
                                       </span>
                                     ) : null}
                                   </div>
@@ -5154,19 +5139,22 @@ export default function AllWin() {
                           ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                               <div style={{ fontSize: 11, fontWeight: 700, color: '#58a6ff' }}>
-                                Buchung bearbeiten — {t.kind === 'buy' ? 'Kauf' : 'Verkauf'} {t.sym}
+                                {tr('common.editDepotBooking', {
+                                  kind: t.kind === 'buy' ? tr('common.tradeBuyLabel').replace('🟢 ', '') : tr('common.tradeSellLabel').replace('🔴 ', ''),
+                                  sym: t.sym,
+                                })}
                               </div>
                               <input
                                 style={{ ...S.input, marginTop: 0, marginBottom: 0 }}
                                 inputMode="decimal"
-                                placeholder="Stückzahl"
+                                placeholder={tr('common.editTradeSharesPlaceholder')}
                                 value={tradeEditAmount}
                                 onChange={(e) => setTradeEditAmount(e.target.value)}
                               />
                               <input
                                 style={{ ...S.input, marginTop: 0, marginBottom: 0 }}
                                 inputMode="decimal"
-                                placeholder="Kurs je Stück (€)"
+                                placeholder={tr('common.editTradePricePlaceholder')}
                                 value={tradeEditPrice}
                                 onChange={(e) => setTradeEditPrice(e.target.value)}
                               />
@@ -5174,30 +5162,30 @@ export default function AllWin() {
                                 <input
                                   style={{ ...S.input, flex: 1, marginTop: 0, marginBottom: 0 }}
                                   inputMode="decimal"
-                                  placeholder="Gebühr €"
+                                  placeholder={tr('common.feePlaceholder')}
                                   value={tradeEditFeeStr}
                                   onChange={(e) => setTradeEditFeeStr(normalizeMoneyDecimalInput(e.target.value))}
                                 />
                                 <input
                                   style={{ ...S.input, flex: 1, marginTop: 0, marginBottom: 0 }}
                                   inputMode="decimal"
-                                  placeholder="Steuer €"
+                                  placeholder={tr('common.taxPlaceholder')}
                                   value={tradeEditTaxStr}
                                   onChange={(e) => setTradeEditTaxStr(normalizeMoneyDecimalInput(e.target.value))}
                                 />
                               </div>
                               <input
                                 style={{ ...S.input, marginTop: 0, marginBottom: 0 }}
-                                placeholder="Datum / Notiz"
+                                placeholder={tr('common.editTradeDatePlaceholder')}
                                 value={tradeEditDate}
                                 onChange={(e) => setTradeEditDate(e.target.value)}
                               />
                               <div style={{ display: 'flex', gap: 8 }}>
                                 <button type="button" style={{ ...S.btn(), flex: 1, marginTop: 0 }} onClick={saveEditedPortfolioTrade}>
-                                  Speichern
+                                  {tr('common.save')}
                                 </button>
                                 <button type="button" style={{ ...S.chip(false), flex: 1, marginTop: 0 }} onClick={cancelEditPortfolioTrade}>
-                                  Abbrechen
+                                  {tr('common.cancel')}
                                 </button>
                               </div>
                             </div>
@@ -5233,12 +5221,12 @@ export default function AllWin() {
 
   const appTourSteps = useMemo(
     () =>
-      APP_TOUR_STEPS.filter((s) => {
+      getAppTourSteps(locale).filter((s) => {
         if (s.requiresOpenDebts && !hasOpenDebts) return false;
         if (s.requiresLevelUpUnlocked && levelUpLocked) return false;
         return true;
       }),
-    [hasOpenDebts, levelUpLocked],
+    [hasOpenDebts, levelUpLocked, locale],
   );
 
   useEffect(() => {
@@ -5252,19 +5240,19 @@ export default function AllWin() {
   const renderDashboard = () => (
     <div style={S.section}>
       <div data-tour="home-saldo" style={S.cardAccent(saldo >= 0)}>
-        <div style={S.label}>Monat in Zahlen</div>
+        <div style={S.label}>{tr('home.monthInNumbers')}</div>
         <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2 }}>
-          {MONTHS[calMonth0]} {reportYear}
+          {monthLabel(calMonth0, locale)} {reportYear}
         </div>
         <div style={{ ...S.bigNum, color: saldo >= 0 ? '#2563eb' : '#ff7b7b', marginTop: 6 }}>{fmtMoney(saldo)}</div>
-        <div style={{ fontSize: 12, color: '#7d8590', marginTop: 4 }}>{saldo >= 0 ? 'Plus im Monat' : 'Minus im Monat'}</div>
+        <div style={{ fontSize: 12, color: '#7d8590', marginTop: 4 }}>{saldo >= 0 ? tr('home.plusMonth') : tr('home.minusMonth')}</div>
         <div style={{ ...S.row, marginTop: 12 }}>
           <div>
-            <div style={S.label}>Einnahmen</div>
+            <div style={S.label}>{tr('home.income')}</div>
             <div style={{ color: '#2563eb', fontWeight: 700 }}>{fmtMoney(moneyThisMonth.einnahmen)}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <div style={S.label}>Ausgaben</div>
+            <div style={S.label}>{tr('home.expenses')}</div>
             <div style={{ color: '#ff7b7b', fontWeight: 700 }}>{fmtMoney(moneyThisMonth.ausgaben)}</div>
           </div>
         </div>
@@ -5291,7 +5279,7 @@ export default function AllWin() {
               textUnderlineOffset: 3,
             }}
           >
-            In Money bearbeiten
+            {tr('home.editInMoney')}
           </button>
           <button
             type="button"
@@ -5307,7 +5295,7 @@ export default function AllWin() {
               textUnderlineOffset: 3,
             }}
           >
-            Onboarding wiederholen
+            {tr('home.restartOnboarding')}
           </button>
         </div>
       </div>
@@ -5318,7 +5306,7 @@ export default function AllWin() {
             type="button"
             aria-expanded={notgroschenHomeMenuOpen}
             aria-haspopup="menu"
-            aria-label="Notgroschen-Optionen"
+            aria-label={tr('common.emergencyOptions')}
             onClick={() => setNotgroschenHomeMenuOpen((o) => !o)}
             style={{
               background: '#24242c',
@@ -5375,18 +5363,18 @@ export default function AllWin() {
                   cursor: 'pointer',
                 }}
               >
-                Stand bearbeiten
+                {tr('home.editBalance')}
               </button>
             </div>
           )}
         </div>
-        <div style={S.label}>🛡️ Notgroschen</div>
+        <div style={S.label}>{tr('home.emergencyFund')}</div>
         <div style={{ fontSize: 12, color: '#7d8590', marginTop: 4, marginBottom: 10, paddingRight: 40 }}>
-          Ziel (aus Onboarding): {fmt(notgroschenTarget)} · Fortschritt steuert u. a. die LevelUp-Freigabe.
+          {tr('home.emergencyGoal', { target: fmt(notgroschenTarget) })}
         </div>
         {notgroschenHomeEditing ? (
           <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>Neuer Stand (€)</div>
+            <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 6 }}>{tr('home.newBalance')}</div>
             <input
               style={{ ...S.input, width: '100%', maxWidth: 220, marginBottom: 8 }}
               inputMode="decimal"
@@ -5404,40 +5392,45 @@ export default function AllWin() {
                   setNotgroschenHomeEditing(false);
                 }}
               >
-                Speichern
+                {tr('common.save')}
               </button>
               <button
                 type="button"
                 style={{ ...S.chip(false), marginTop: 0 }}
                 onClick={() => setNotgroschenHomeEditing(false)}
               >
-                Abbrechen
+                {tr('common.cancel')}
               </button>
             </div>
           </div>
         ) : (
           <div style={{ marginBottom: 10 }}>
-            <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>Aktueller Stand</div>
+            <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 4 }}>{tr('home.currentBalance')}</div>
             <div style={{ ...S.bigNum, color: '#5b93ff' }}>{fmt(notgroschenBalance)}</div>
           </div>
         )}
         <Bar pct={notgroschenTarget > 0 ? Math.min(100, (notgroschenBalance / notgroschenTarget) * 100) : 0} color="#5b93ff" />
         <div style={{ fontSize: 11, color: '#7d8590', marginTop: 6 }}>
-          {notgroschenTarget > 0 ? `${((notgroschenBalance / notgroschenTarget) * 100).toFixed(0)} % vom Ziel` : 'Nach dem Onboarding erscheint hier dein Ziel.'}
+          {notgroschenTarget > 0
+            ? tr('home.percentOfGoal', { pct: ((notgroschenBalance / notgroschenTarget) * 100).toFixed(0) })
+            : tr('home.noGoalYet')}
         </div>
       </div>
 
       {debts.some((d) => d.remaining > 0) && (
         <div style={S.card}>
           <div style={{ ...S.row, marginBottom: 10 }}>
-            <div style={S.label}>💥 Schulden-Status</div>
+            <div style={S.label}>{tr('home.debtStatus')}</div>
             <div style={{ color: '#f0883e', fontWeight: 800 }}>{fmt(totalDebt)}</div>
           </div>
           {housePropertyValueTotal > 0 && (
             <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10, lineHeight: 1.45 }}>
-              🏠 Immobilien-Eigenkapital:{' '}
+              {tr('home.propertyEquity')}{' '}
               <strong style={{ color: houseEquityTotal >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(houseEquityTotal)}</strong>
-              <span style={{ color: '#484f58' }}> (Marktwert {fmt(housePropertyValueTotal)} − Kredit)</span>
+              <span style={{ color: '#484f58' }}>
+                {' '}
+                {tr('home.propertyEquityDetail', { marketValue: fmt(housePropertyValueTotal) })}
+              </span>
             </div>
           )}
           {debts
@@ -5485,19 +5478,19 @@ export default function AllWin() {
                 fontWeight: 700,
               }}
             >
-              Jahresüberblick · Portfolio
+              {tr('home.yearOverview')}
             </div>
           </div>
           <div data-tour="home-portfolio" style={{ paddingTop: 4 }}>
-            <div style={S.label}>💎 Portfolio Power</div>
+            <div style={S.label}>{tr('home.portfolioPower')}</div>
             <div
               style={{ fontSize: 11, color: '#7d8590', marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' as const, fontWeight: 700 }}
             >
-              Gesamt (Positionen + Cash Depot)
+              {tr('home.totalLabel')}
             </div>
             <div style={{ ...S.bigNum, color: '#a855f7' }}>{fmt(portfolioTotalPower)}</div>
             {(() => {
-              const b = portfolioPowerBadgeFor(portfolioTotalPower);
+              const b = portfolioPowerBadgeFor(portfolioTotalPower, locale);
               return b ? (
                 <div style={{ fontSize: b.fontSize, fontWeight: b.fontWeight, color: b.color, marginTop: 4 }}>
                   {b.emoji ? `${b.emoji} ` : ''}
@@ -5506,7 +5499,7 @@ export default function AllWin() {
               ) : null;
             })()}
             <div style={{ fontSize: 11, color: '#7d8590', marginTop: 8, lineHeight: 1.45 }}>
-              Davon investiert: {fmt(portfolioValue)} · Cash Depot: {fmt(portfolioBrokerCash)}. Aufschlüsselung im Tab „LevelUp“.
+              {tr('home.breakdown', { invested: fmt(portfolioValue), cash: fmt(portfolioBrokerCash) })}
             </div>
           </div>
         </div>
@@ -5516,7 +5509,7 @@ export default function AllWin() {
 
   const renderCharts = () => {
     const applyOverviewDemoSample = () => {
-      if (!window.confirm(`Musterbeispiel Jan–Apr 2026 laden?\n\n${OVERVIEW_DEMO_HINT}`)) return;
+      if (!window.confirm(tr('charts.demoConfirm', { hint: OVERVIEW_DEMO_HINT }))) return;
       const snap = getOverviewDemoSnapshot();
       setDebts(snap.debts);
       setTx(snap.transactions);
@@ -5524,7 +5517,7 @@ export default function AllWin() {
       setPortfolioBrokerCash(snap.portfolioBrokerCash);
       setPortfolioTrades(snap.portfolioTrades);
       setDailyVermogenSnapshots(snap.dailyVermogenSnapshots);
-      showToast('Muster geladen — Tages-Verlauf, Money und Abbau‑Kurve (Schulden) zum Anschauen.', 'level');
+      showToast(tr('toast.demoLoaded'), 'level');
     };
 
     return (
@@ -5537,12 +5530,8 @@ export default function AllWin() {
           background: '#121820',
         }}
       >
-        <div style={S.label}>🧪 Musterbeispiel Übersicht</div>
-        <div style={{ fontSize: 12, color: '#8b949e', marginTop: 6, lineHeight: 1.5 }}>
-          Lädt Demo-Daten für <strong style={{ color: '#c9d1d9' }}>Jan–Apr 2026</strong>: Money-Buchungen (Kreditrate, Sparrate, Cash Depot …) plus{' '}
-          <strong style={{ color: '#c9d1d9' }}>acht feste Tages-Snapshots</strong> für die Kurven „Komplette Vermögensübersicht“ und „Portfolio + Cash“ — so siehst du sofort den Tagesmodus.
-          Abbau‑Kurve unter Schulden‑Entwicklung wie zuvor.
-        </div>
+        <div style={S.label}>{tr('charts.demoTitle')}</div>
+        <div style={{ fontSize: 12, color: '#8b949e', marginTop: 6, lineHeight: 1.5 }}>{tr('charts.demoBody')}</div>
         <div style={{ fontSize: 11, color: '#7d8590', marginTop: 10, lineHeight: 1.45 }}>{OVERVIEW_DEMO_HINT}</div>
         <button
           type="button"
@@ -5560,10 +5549,12 @@ export default function AllWin() {
             cursor: 'pointer',
           }}
         >
-          Muster Jan–Apr 2026 laden
+          {tr('charts.demoLoad')}
         </button>
       </div>
       <HomeChartsSection
+        locale={locale}
+        formatMoney={fmt}
         standalonePage
         levelUpLocked={levelUpLocked}
         moneyYearOverview={{ reportYear, buckets: monthlyBuckets, levelUpLocked, formatMoney: fmt }}
@@ -5591,17 +5582,17 @@ export default function AllWin() {
   const renderMoneyTxRow = (tx: Transaction) => (
     <div key={tx.id} style={{ ...S.txRow, alignItems: 'flex-start', gap: 8 }}>
       <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>{tx.category}</div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{categoryLabel(tx.category, locale)}</div>
         <div style={{ fontSize: 11, color: '#7d8590' }}>
           {(() => {
-            const boost = tx.linkedDebtName ? `Boost: ${tx.linkedDebtName}` : '';
-            const ng = tx.fillsNotgroschen ? 'Home: Notgroschen +' : tx.debitsNotgroschen ? 'Home: Notgroschen −' : '';
-            const cd = tx.debitsCashDepot ? 'LevelUp: Cash −' : tx.creditsCashDepot ? 'LevelUp: Cash +' : '';
+            const boost = tx.linkedDebtName ? tr('common.boostLinked', { name: tx.linkedDebtName }) : '';
+            const ng = tx.fillsNotgroschen ? tr('common.homeEmergencyPlus') : tx.debitsNotgroschen ? tr('common.homeEmergencyMinus') : '';
+            const cd = tx.debitsCashDepot ? tr('common.levelUpCashMinus') : tx.creditsCashDepot ? tr('common.levelUpCashPlus') : '';
             const divFee =
               tx.type === 'einnahme' && tx.category === 'Dividende' && ((tx.feeEur ?? 0) > 0 || (tx.taxEur ?? 0) > 0)
-                ? `netto Cash ${fmtMoney(Math.round((txAmountNum(tx) - (tx.feeEur ?? 0) - (tx.taxEur ?? 0)) * 100) / 100)}`
+                ? `${tr('common.netCash')} ${fmtMoney(Math.round((txAmountNum(tx) - (tx.feeEur ?? 0) - (tx.taxEur ?? 0)) * 100) / 100)}`
                 : '';
-            const bits = [boost, ng, cd, divFee, tx.paymentMethod, tx.note].filter(Boolean);
+            const bits = [boost, ng, cd, divFee, tx.paymentMethod ? paymentMethodLabel(tx.paymentMethod, locale) : '', tx.note].filter(Boolean);
             const sub = bits.join(' · ');
             return sub ? `${sub} · ${formatTxDateLabel(tx.date)}` : formatTxDateLabel(tx.date);
           })()}
@@ -5620,7 +5611,7 @@ export default function AllWin() {
         <div style={{ display: 'flex', gap: 6 }}>
           <button
             type="button"
-            aria-label="Buchung bearbeiten"
+            aria-label={tr('common.editBookingAria')}
             onClick={() => startEditTx(tx)}
             style={{ ...S.chip(editingTxId === tx.id), marginTop: 0, padding: '5px 10px', fontSize: 11 }}
           >
@@ -5628,7 +5619,7 @@ export default function AllWin() {
           </button>
           <button
             type="button"
-            aria-label="Buchung löschen"
+            aria-label={tr('common.deleteBookingAria')}
             onClick={() => deleteTx(tx.id)}
             style={{ ...S.chip(false), marginTop: 0, padding: '5px 10px', fontSize: 11, color: '#ff7b7b' }}
           >
@@ -5660,14 +5651,14 @@ export default function AllWin() {
             textAlign: 'left',
           }}
         >
-          <div style={S.label}>📜 Letzte Buchungen</div>
+          <div style={S.label}>{tr('money.recentBookings')}</div>
           <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700, flexShrink: 0 }}>
             {transactions.length} {moneyTxListExpanded ? '▼' : '▶'}
           </span>
         </button>
         {!moneyTxListExpanded && (
           <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2 }}>
-            Zugeklappt — antippen zum Anzeigen.
+            {tr('common.collapsed')}
           </div>
         )}
         {moneyTxListExpanded && (
@@ -5694,7 +5685,7 @@ export default function AllWin() {
             type="button"
             aria-expanded={moneyOverflowOpen}
             aria-haspopup="menu"
-            aria-label="Money-Optionen"
+            aria-label={tr('common.moneyOptions')}
             onClick={() => setMoneyOverflowOpen((o) => !o)}
             style={{
               background: '#24242c',
@@ -5752,7 +5743,7 @@ export default function AllWin() {
                   lineHeight: 1.35,
                 }}
               >
-                <span style={{ fontWeight: 700 }}>Neue Schuld / Kredit</span>
+                <span style={{ fontWeight: 700 }}>{tr('money.newDebtCredit')}</span>
                 <span style={{ display: 'block', fontSize: 11, color: '#7d8590', marginTop: 4, fontWeight: 400 }}>
                   Öffnet Boost mit Formular — z. B. nach neuem Kredit
                 </span>
@@ -5766,7 +5757,7 @@ export default function AllWin() {
                 }}
               >
                 <div style={{ fontSize: 11, color: '#7d8590', padding: '4px 12px 6px', fontWeight: 600 }}>
-                  Grundwährung
+                  {tr('money.baseCurrency')}
                 </div>
                 <select
                   value={baseCurrency}
@@ -5777,7 +5768,7 @@ export default function AllWin() {
                     width: 'calc(100% - 16px)',
                     fontSize: 12,
                   }}
-                  aria-label="Grundwährung"
+                  aria-label={tr('money.baseCurrency')}
                 >
                   {MONEY_CURRENCIES.map((c) => (
                     <option key={c.code} value={c.code}>
@@ -5786,7 +5777,7 @@ export default function AllWin() {
                   ))}
                 </select>
                 <div style={{ fontSize: 10, color: '#7d8590', padding: '0 12px 8px', lineHeight: 1.45 }}>
-                  Standard in „Neue Buchung“ — Fremdwährungen werden hierhin umgerechnet.
+                  {tr('common.baseCurrencyDefaultHint')}
                 </div>
                 <button
                   type="button"
@@ -5808,12 +5799,12 @@ export default function AllWin() {
                     cursor: 'pointer',
                   }}
                 >
-                  🏖️ Im Urlaub? {vacationMode ? '✅' : ''}
+                  {tr('money.vacationMode')} {vacationMode ? '✅' : ''}
                 </button>
                 {vacationMode && (
                   <>
                     <div style={{ fontSize: 11, color: '#7d8590', padding: '0 12px 6px', fontWeight: 600 }}>
-                      Urlaubswährung in „Neue Buchung“
+                      {tr('money.vacationCurrency')}
                     </div>
                     <select
                       value={vacationCurrency}
@@ -5824,7 +5815,7 @@ export default function AllWin() {
                         width: 'calc(100% - 16px)',
                         fontSize: 12,
                       }}
-                      aria-label="Urlaubswährung"
+                      aria-label={tr('money.vacationCurrency')}
                     >
                       {MONEY_CURRENCIES.filter((c) => c.code !== baseCurrency).map((c) => (
                         <option key={c.code} value={c.code}>
@@ -5833,7 +5824,7 @@ export default function AllWin() {
                       ))}
                     </select>
                     <div style={{ fontSize: 10, color: '#7d8590', padding: '0 12px 10px', lineHeight: 1.45 }}>
-                      Betrag vor Ort eingeben — Umrechnung in {moneyCurrencyLabel(baseCurrency)} wie gewohnt.
+                      {tr('common.vacationConvertHint', { currency: moneyCurrencyLabel(baseCurrency) })}
                     </div>
                   </>
                 )}
@@ -5862,9 +5853,9 @@ export default function AllWin() {
         onChange={onReceiptFilePicked}
       />
       <div style={{ ...S.card, marginBottom: 10 }}>
-        <div style={S.label}>🧾 Kassenzettel-Scan</div>
+        <div style={S.label}>{tr('money.receiptScan')}</div>
         <div style={{ fontSize: 11, color: '#8b949e', marginTop: 4, marginBottom: 10, lineHeight: 1.45 }}>
-          Kassenzettel, Quittung oder Rechnung — Betrag & Händler werden vorausgefüllt (du prüfst vor dem Speichern).
+          {tr('common.receiptScanHint')}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
           <button
@@ -5878,13 +5869,13 @@ export default function AllWin() {
             }}
             onClick={() => {
               if (!authToken) {
-                showToast('Bitte anmelden für den Kassenzettel-Scan.', 'error');
+                showToast(tr('toast.loginForReceiptScan'), 'error');
                 return;
               }
               receiptCameraInputRef.current?.click();
             }}
           >
-            {receiptScanning ? '⏳ …' : '📷 Beleg fotografieren'}
+            {receiptScanning ? '⏳ …' : tr('common.photoReceipt')}
           </button>
           <button
             type="button"
@@ -5901,20 +5892,20 @@ export default function AllWin() {
             }}
             onClick={() => {
               if (!authToken) {
-                showToast('Bitte anmelden für den Kassenzettel-Scan.', 'error');
+                showToast(tr('toast.loginForReceiptScan'), 'error');
                 return;
               }
               receiptLibraryInputRef.current?.click();
             }}
           >
-            {receiptScanning ? '⏳ …' : '🖼 Beleg aus Mediathek'}
+            {receiptScanning ? '⏳ …' : tr('common.libraryReceipt')}
           </button>
         </div>
         {receiptScanning && (
-          <div style={{ fontSize: 12, color: '#00d4aa', marginTop: 8, fontWeight: 600 }}>Beleg wird gelesen…</div>
+          <div style={{ fontSize: 12, color: '#00d4aa', marginTop: 8, fontWeight: 600 }}>{tr('common.readingReceipt')}</div>
         )}
         <div style={{ fontSize: 11, color: '#7d8590', marginTop: 8, lineHeight: 1.45 }}>
-          Das Foto wird nicht in der App gespeichert — nur die Buchung nach deiner Bestätigung.
+          {tr('common.receiptPrivacy')}
         </div>
       </div>
       <div data-tour="money-form" ref={moneyFormRef} style={{ ...S.card, scrollMarginTop: 12 }}>
@@ -5936,21 +5927,19 @@ export default function AllWin() {
             textAlign: 'left',
           }}
         >
-          <div style={S.label}>{editingTxId != null ? '✏️ Buchung bearbeiten' : '✨ Neue Buchung'}</div>
+          <div style={S.label}>{editingTxId != null ? tr('money.editBooking') : tr('money.newBooking')}</div>
           <span style={{ fontSize: 12, color: '#8b949e', fontWeight: 700, flexShrink: 0 }}>{moneyFormOpen ? '▼' : '▶'}</span>
         </button>
         {!moneyFormOpen && (
           <div style={{ fontSize: 11, color: '#8b949e', marginTop: 2 }}>
-            {editingTxId != null ? 'Formular ist geöffnet — unten speichern oder abbrechen.' : 'Antippen, um eine Buchung einzutragen.'}
+            {editingTxId != null ? tr('common.formOpenEdit') : tr('common.formOpenNew')}
           </div>
         )}
         {moneyFormOpen && (
         <>
         <div style={{ fontSize: 11, color: '#7d8590', marginTop: 4, marginBottom: 10 }}>
-          Zählt für Home und Jahresübersicht (Kalendermonat). Einnahmen (Gehalt, Trinkgeld, …): Summe aller Buchungen in der Liste „Einnahmen“ + Kreisdiagramm unter Übersicht. „Kreditrate“ + Schuld: Tilgung in Boost. Kategorie „Notgroschen“: Polster aufstocken. Zahlungsart „Notgroschen“: aus dem Polster zahlen. Zahlungsart „Cash Depot“: Broker-Cash abbuchen; „Einzahlung Cash Depot“: Broker-Cash aufstocken (Haushalt zählt weiter als Ausgabe). Abos/Miete/Kreditrate: „Laufende Fixkosten“; Essen, Fahrt, Kleidung u. a.: „Variable Kosten“ (jeweils letzter Betrag je Position).
-          {!debts.some((d) => d.remaining > 0) && (
-            <span> Keine offene Schuld? Neuen Kredit oben rechts über ⋮ in Boost anlegen.</span>
-          )}
+          {tr('common.bookingHelp')}
+          {!debts.some((d) => d.remaining > 0) && <span>{tr('common.noOpenDebtHint')}</span>}
         </div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
           {['einnahme', 'ausgabe'].map((t) => (
@@ -5972,7 +5961,7 @@ export default function AllWin() {
                 }))
               }
             >
-              {t === 'einnahme' ? '💰 Einnahme' : '💸 Ausgabe'}
+              {t === 'einnahme' ? tr('money.incomeType') : tr('money.expenseType')}
             </button>
           ))}
         </div>
@@ -5983,8 +5972,8 @@ export default function AllWin() {
               inputMode="decimal"
               placeholder={
                 form.currency === baseCurrency
-                  ? `Betrag in ${moneyCurrencySymbol(baseCurrency)} (z. B. 3200,50)`
-                  : `Betrag in ${form.currency} (Bar vor Ort)`
+                  ? tr('common.amountPlaceholderBase', { symbol: moneyCurrencySymbol(baseCurrency) })
+                  : tr('common.amountPlaceholderForeign', { currency: form.currency })
               }
               value={form.amount}
               onChange={(e) => setForm((f) => ({ ...f, amount: normalizeMoneyDecimalInput(e.target.value) }))}
@@ -6002,7 +5991,7 @@ export default function AllWin() {
               }}
               value={form.currency}
               onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
-              aria-label="Währung"
+              aria-label={tr('common.currency')}
             >
               {MONEY_CURRENCIES.map((c) => (
                 <option key={c.code} value={c.code}>
@@ -6013,38 +6002,38 @@ export default function AllWin() {
           </div>
           {form.currency !== baseCurrency && (
             <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.45 }}>
-              {fxLoading && 'Wechselkurs wird geladen…'}
+              {fxLoading && tr('common.fxLoading')}
               {!fxLoading && fxError && fxError}
               {!fxLoading && !fxError && convertedBasePreview != null && (
                 <>
                   ≈{' '}
                   <strong style={{ color: '#c9d1d9' }}>{formatMoneyAmount(convertedBasePreview, baseCurrency)}</strong>{' '}
                   in {moneyCurrencyLabel(baseCurrency)}
-                  {fxRateDate ? ` · EZB-Kurs vom ${fxRateDate}` : ''}
+                  {fxRateDate ? tr('common.fxRateDate', { date: fxRateDate }) : ''}
                 </>
               )}
               {!fxLoading && !fxError && convertedBasePreview == null && String(form.amount).trim() && (
-                <>Betrag eingeben — wird automatisch in {moneyCurrencyLabel(baseCurrency)} umgerechnet.</>
+                <>{tr('common.fxEnterAmount', { currency: moneyCurrencyLabel(baseCurrency) })}</>
               )}
             </div>
           )}
           {form.type === 'einnahme' && form.category === 'Dividende' && (
             <>
               <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.45 }}>
-                💸 Bruttobetrag oben — optional Gebühr/Steuer abziehen; netto landet im Cash Depot (LevelUp).
+                {tr('common.dividendGrossHint')}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   style={{ ...S.input, flex: 1, marginTop: 0, marginBottom: 0 }}
                   inputMode="decimal"
-                  placeholder="Gebühr € (optional)"
+                  placeholder={tr('common.feePlaceholder')}
                   value={form.feeStr}
                   onChange={(e) => setForm((f) => ({ ...f, feeStr: normalizeMoneyDecimalInput(e.target.value) }))}
                 />
                 <input
                   style={{ ...S.input, flex: 1, marginTop: 0, marginBottom: 0 }}
                   inputMode="decimal"
-                  placeholder="Steuer € (optional)"
+                  placeholder={tr('common.taxPlaceholder')}
                   value={form.taxStr}
                   onChange={(e) => setForm((f) => ({ ...f, taxStr: normalizeMoneyDecimalInput(e.target.value) }))}
                 />
@@ -6064,10 +6053,10 @@ export default function AllWin() {
               boxSizing: 'border-box',
             }}
           >
-            <span style={{ fontSize: 13, color: '#8b949e', flexShrink: 0 }}>📅 Datum</span>
+            <span style={{ fontSize: 13, color: '#8b949e', flexShrink: 0 }}>📅 {tr('common.date')}</span>
             <input
               type="date"
-              aria-label="Datum"
+              aria-label={tr('common.date')}
               value={form.date}
               onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
               style={{
@@ -6098,7 +6087,7 @@ export default function AllWin() {
             }}
           >
             {(form.type === 'einnahme' ? CATS.einnahmen : CATS.ausgaben).map((c) => (
-              <option key={c}>{c}</option>
+              <option key={c} value={c}>{categoryLabel(c, locale)}</option>
             ))}
           </select>
           {form.type === 'ausgabe' && form.category === 'Abos' && (
@@ -6113,30 +6102,30 @@ export default function AllWin() {
           )}
           {form.type === 'ausgabe' && form.category === 'Notgroschen' && (
             <div style={{ fontSize: 11, color: '#5b93ff', lineHeight: 1.45 }}>
-              🛡️ Der Betrag wird deinem Notgroschen auf Home gutgeschrieben (zusätzlich als Ausgabe im Monat erfasst).
+              {tr('common.emergencyCategoryHint')}
             </div>
           )}
           {form.type === 'ausgabe' && form.category === 'Kreditrate' && (
             <>
-              <div style={{ fontSize: 11, color: '#f0883e', fontWeight: 600 }}>⚡ Welche Schuld tilgst du? (Boost)</div>
+              <div style={{ fontSize: 11, color: '#f0883e', fontWeight: 600 }}>{tr('common.whichDebt')}</div>
               <select
                 style={S.select}
                 value={form.linkedDebtId}
                 onChange={(e) => setForm((f) => ({ ...f, linkedDebtId: e.target.value }))}
               >
                 <option value="">
-                  {debts.filter((d) => d.remaining > 0).length === 0 ? '— Zuerst unter Boost eine Schuld anlegen' : '— Schuld wählen (Pflicht)'}
+                  {debts.filter((d) => d.remaining > 0).length === 0 ? tr('common.selectDebtFirst') : tr('common.selectDebtRequired')}
                 </option>
                 {debts
                   .filter((d) => d.remaining > 0)
                   .map((d) => (
                     <option key={d.id} value={String(d.id)}>
-                      {d.name} (Rest {fmt(d.remaining)})
+                      {tr('common.debtRest', { name: d.name, amount: fmt(d.remaining) })}
                     </option>
                   ))}
               </select>
               <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.45, marginTop: 6 }}>
-                Jede Tilgung erscheint unter „Laufende Fixkosten“ je Schuld (letzter Betrag).
+                {tr('common.debtPaymentHint')}
               </div>
             </>
           )}
@@ -6146,24 +6135,23 @@ export default function AllWin() {
               : PAYMENT_METHOD_OPTIONS
             ).map((pm) => (
               <option key={pm || 'none'} value={pm}>
-                {pm ? pm : '— Zahlungsart (optional)'}
+                {pm ? paymentMethodLabel(pm, locale) : tr('common.paymentMethodOptional')}
               </option>
             ))}
           </select>
           {form.type === 'ausgabe' && form.paymentMethod === 'Cash Depot' && (
             <div style={{ fontSize: 11, color: '#a855f7', lineHeight: 1.45 }}>
-              💎 Zahlung aus dem <strong style={{ color: '#e6edf3' }}>Cash Depot</strong> (LevelUp) — jetzt verfügbar: {fmt(portfolioBrokerCash)}
+              {tr('common.cashDepotPayHint', { amount: fmt(portfolioBrokerCash) })}
             </div>
           )}
           {form.type === 'ausgabe' && form.paymentMethod === 'Einzahlung Cash Depot' && (
             <div style={{ fontSize: 11, color: '#a855f7', lineHeight: 1.45 }}>
-              💎 <strong style={{ color: '#e6edf3' }}>Einzahlung ins Cash Depot</strong> (LevelUp / Broker-Cash). Die Ausgabe erscheint trotzdem in deinem Money-Monat; Stand jetzt vor Buchung:{' '}
-              {fmt(portfolioBrokerCash)}.
+              {tr('common.cashDepotDepositHint', { amount: fmt(portfolioBrokerCash) })}
             </div>
           )}
           {form.type === 'ausgabe' && form.paymentMethod === 'Notgroschen' && (
             <div style={{ fontSize: 11, color: '#5b93ff', lineHeight: 1.45 }}>
-              🛡️ Zahlung aus dem Notgroschen — der Stand auf Home wird um den Betrag verringert (Ausgabe bleibt im Monat erfasst).
+              {tr('common.emergencyPayHint')}
             </div>
           )}
           <div style={{ position: 'relative' }} data-note-field>
@@ -6171,10 +6159,10 @@ export default function AllWin() {
               style={S.input}
               placeholder={
                 form.type === 'ausgabe' && form.category === 'Abos'
-                  ? 'Notiz z. B. Netflix, Spotify, Handyvertrag…'
+                  ? tr('common.noteAbos')
                   : form.type === 'ausgabe' && form.category === 'Miete'
-                    ? 'z. B. Warmmiete, Garage, Nebenkosten…'
-                    : 'Notiz (optional)'
+                    ? tr('common.noteRent')
+                    : tr('common.noteOptional')
               }
               value={form.note}
               onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))}
@@ -6232,11 +6220,11 @@ export default function AllWin() {
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
             <button style={{ ...S.btn(), flex: 1, minWidth: 120 }} onClick={addTx}>
-              {editingTxId != null ? '✅ Aktualisieren' : '✅ Speichern'}
+              {editingTxId != null ? tr('common.update') : `✅ ${tr('common.save')}`}
             </button>
             {editingTxId != null && (
               <button type="button" style={{ ...S.chip(false), marginTop: 8, flex: 1, minWidth: 100 }} onClick={resetMoneyForm}>
-                Abbrechen
+                {tr('common.cancel')}
               </button>
             )}
           </div>
@@ -6267,10 +6255,10 @@ export default function AllWin() {
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <div style={S.label}>💰 Einnahmen</div>
+            <div style={S.label}>{tr('money.income')}</div>
             {!moneyIncomeOpen && (
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                {incomeOverviewRows.length} Pos. · Summe {fmtMoney(incomeOverviewSum)}
+                {incomeOverviewRows.length} {tr('common.positions')} · {tr('common.sum')} {fmtMoney(incomeOverviewSum)}
               </div>
             )}
           </div>
@@ -6279,22 +6267,20 @@ export default function AllWin() {
         {moneyIncomeOpen && (
           <>
             <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2, marginBottom: 12, lineHeight: 1.45 }}>
-              Aus Einnahmen in <strong style={{ color: '#e6edf3' }}>Gehalt</strong>, <strong style={{ color: '#e6edf3' }}>Trinkgeld</strong>, <strong style={{ color: '#e6edf3' }}>Gutschrift</strong>, <strong style={{ color: '#e6edf3' }}>Geschenk</strong>, Dividende, Zinsen, Freelance, Nebenjob, Sonstiges. Je{' '}
-              <strong style={{ color: '#e6edf3' }}>Kategorie + Notizzeile</strong> die <strong style={{ color: '#e6edf3' }}>Summe aller Buchungen</strong> — Kreisdiagramm nach Kategorie unter Tab{' '}
-              <strong style={{ color: '#e6edf3' }}>Übersicht</strong>.
+              {tr('common.incomeOverviewHint')}
             </div>
             {incomeOverviewRows.length === 0 ? (
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>Noch keine Einnahmen gebucht.</div>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>{tr('common.noIncomeYet')}</div>
             ) : (
               incomeOverviewRows.map((row) => (
                 <div key={`inc-${row.key}`} style={{ ...S.txRow, marginBottom: 2 }}>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700, letterSpacing: '0.04em', marginBottom: 2 }}>{row.category}</div>
+                    <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700, letterSpacing: '0.04em', marginBottom: 2 }}>{categoryLabel(row.category, locale)}</div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{row.title}</div>
                     <div style={{ fontSize: 11, color: '#7d8590' }}>
-                      {row.count > 1 ? `${row.count} Buchungen · ` : ''}
-                      Zuletzt {formatTxDateLabel(row.latest.date)}
-                      {row.latest.paymentMethod ? ` · ${row.latest.paymentMethod}` : ''}
+                      {row.count > 1 ? `${row.count} ${tr('common.bookings')} · ` : ''}
+                      {tr('common.last')} {formatTxDateLabel(row.latest.date)}
+                      {row.latest.paymentMethod ? ` · ${paymentMethodLabel(row.latest.paymentMethod, locale)}` : ''}
                     </div>
                   </div>
                   <div style={{ fontWeight: 800, color: '#2563eb', flexShrink: 0 }}>{fmtMoney(row.sum)}</div>
@@ -6315,7 +6301,7 @@ export default function AllWin() {
                   flexWrap: 'wrap' as const,
                 }}
               >
-                <span>Summe (alle Einnahmen)</span>
+                <span>{tr('common.incomeSum')}</span>
                 <span style={{ fontWeight: 800, color: '#2563eb' }}>{fmtMoney(incomeOverviewSum)}</span>
               </div>
             )}
@@ -6343,10 +6329,10 @@ export default function AllWin() {
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <div style={S.label}>📌 Laufende Fixkosten</div>
+            <div style={S.label}>{tr('money.fixedCosts')}</div>
             {!moneyFixedCostsOpen && (
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                {fixedCostOverviewRows.length} Pos. · Summe {fmtMoney(fixedCostOverviewSum)}
+                {fixedCostOverviewRows.length} {tr('common.positions')} · {tr('common.sum')} {fmtMoney(fixedCostOverviewSum)}
               </div>
             )}
           </div>
@@ -6355,23 +6341,21 @@ export default function AllWin() {
         {moneyFixedCostsOpen && (
           <>
             <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2, marginBottom: 12, lineHeight: 1.45 }}>
-              Aus Ausgaben der Kategorien <strong style={{ color: '#e6edf3' }}>Abos</strong>, <strong style={{ color: '#e6edf3' }}>Miete</strong> und{' '}
-              <strong style={{ color: '#e6edf3' }}>Kreditrate</strong>. Je Position gilt die{' '}
-              <strong style={{ color: '#e6edf3' }}>letzte Buchung</strong> (Abos/Miete: Name in der Notiz; Kreditraten: Schuld aus Boost).
+              {tr('common.fixedOverviewHint')}
             </div>
             {fixedCostOverviewRows.length === 0 ? (
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>Noch keine Fixkosten gebucht.</div>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>{tr('common.noFixedYet')}</div>
             ) : (
               fixedCostOverviewRows.map((tx) => (
                 <div key={`fix-${fixedCostDedupeKey(tx)}`} style={{ ...S.txRow, marginBottom: 2 }}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700, letterSpacing: '0.04em', marginBottom: 2 }}>
-                      {fixedCostKindShort(tx.category)}
+                      {fixedCostKindShort(tx.category, locale)}
                     </div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{formatFixedCostTitle(tx)}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{formatFixedCostTitle(tx, locale)}</div>
                     <div style={{ fontSize: 11, color: '#7d8590' }}>
-                      Zuletzt {formatTxDateLabel(tx.date)}
-                      {tx.paymentMethod ? ` · ${tx.paymentMethod}` : ''}
+                      {tr('common.last')} {formatTxDateLabel(tx.date)}
+                      {tx.paymentMethod ? ` · ${paymentMethodLabel(tx.paymentMethod, locale)}` : ''}
                     </div>
                   </div>
                   <div style={{ fontWeight: 800, color: '#ff7b7b', flexShrink: 0 }}>{fmtMoney(+tx.amount)}</div>
@@ -6392,7 +6376,7 @@ export default function AllWin() {
                   flexWrap: 'wrap' as const,
                 }}
               >
-                <span>Summe (letzte Beträge je Position)</span>
+                <span>{tr('common.fixedSum')}</span>
                 <span style={{ fontWeight: 800, color: '#e6edf3' }}>{fmtMoney(fixedCostOverviewSum)}</span>
               </div>
             )}
@@ -6420,10 +6404,10 @@ export default function AllWin() {
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <div style={S.label}>📎 Variable Kosten</div>
+            <div style={S.label}>{tr('money.variableCosts')}</div>
             {!moneyVarCostsOpen && (
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                {variableCostOverviewRows.length} Pos. · Summe {fmtMoney(variableCostOverviewSum)}
+                {variableCostOverviewRows.length} {tr('common.positions')} · {tr('common.sum')} {fmtMoney(variableCostOverviewSum)}
               </div>
             )}
           </div>
@@ -6432,21 +6416,19 @@ export default function AllWin() {
         {moneyVarCostsOpen && (
           <>
             <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2, marginBottom: 12, lineHeight: 1.45 }}>
-              Aus Ausgaben in <strong style={{ color: '#e6edf3' }}>{'Essen & Trinken'}</strong>,{' '}
-              <strong style={{ color: '#e6edf3' }}>Fahrtkosten</strong>, Kleidung, Gesundheit, Freizeit, Sonstiges. Je{' '}
-              <strong style={{ color: '#e6edf3' }}>Kategorie + Notizzeile</strong> die letzte Buchung — damit mehrere Märkte/Projekte nebeneinander getrennt sind.
+              {tr('common.variableOverviewHint')}
             </div>
             {variableCostOverviewRows.length === 0 ? (
-              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>Noch keine variablen Kosten gebucht.</div>
+              <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 4 }}>{tr('common.noVariableYet')}</div>
             ) : (
               variableCostOverviewRows.map((tx) => (
                 <div key={`var-${varCostDedupeKey(tx)}`} style={{ ...S.txRow, marginBottom: 2 }}>
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700, letterSpacing: '0.04em', marginBottom: 2 }}>{tx.category}</div>
+                    <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700, letterSpacing: '0.04em', marginBottom: 2 }}>{categoryLabel(tx.category, locale)}</div>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#e6edf3' }}>{formatVarCostTitle(tx)}</div>
                     <div style={{ fontSize: 11, color: '#7d8590' }}>
-                      Zuletzt {formatTxDateLabel(tx.date)}
-                      {tx.paymentMethod ? ` · ${tx.paymentMethod}` : ''}
+                      {tr('common.last')} {formatTxDateLabel(tx.date)}
+                      {tx.paymentMethod ? ` · ${paymentMethodLabel(tx.paymentMethod, locale)}` : ''}
                     </div>
                   </div>
                   <div style={{ fontWeight: 800, color: '#ff7b7b', flexShrink: 0 }}>{fmtMoney(+tx.amount)}</div>
@@ -6467,7 +6449,7 @@ export default function AllWin() {
                   flexWrap: 'wrap' as const,
                 }}
               >
-                <span>Summe (letzte Beträge je Position)</span>
+                <span>{tr('common.fixedSum')}</span>
                 <span style={{ fontWeight: 800, color: '#e6edf3' }}>{fmtMoney(variableCostOverviewSum)}</span>
               </div>
             )}
@@ -6501,12 +6483,12 @@ export default function AllWin() {
             <div style={{ fontWeight: 700 }}>{d.name}</div>
             {d.interest > 0 && (
               <div style={{ fontSize: 11, color: '#ff7b7b', background: '#ff7b7b22', padding: '2px 8px', borderRadius: 99 }}>
-                {d.interest}% Zinsen
+                {d.interest}% {tr('common.interest')}
               </div>
             )}
           </div>
           <div style={{ ...S.row, margin: '10px 0 6px' }}>
-            <span style={{ fontSize: 12, color: '#7d8590' }}>Noch offen 🎯</span>
+            <span style={{ fontSize: 12, color: '#7d8590' }}>{tr('common.openAmount')}</span>
             <span style={{ fontWeight: 700, color: '#f0883e' }}>{fmt(d.remaining)}</span>
           </div>
           {pv > 0 && equity != null && (
@@ -6520,29 +6502,29 @@ export default function AllWin() {
               }}
             >
               <div style={{ ...S.row, marginBottom: 4 }}>
-                <span style={{ fontSize: 11, color: '#8b949e' }}>🏠 Marktwert Immobilie</span>
+                <span style={{ fontSize: 11, color: '#8b949e' }}>{tr('common.propertyValueLabel')}</span>
                 <span style={{ fontWeight: 700, color: '#93c5fd' }}>{fmt(pv)}</span>
               </div>
               <div style={S.row}>
-                <span style={{ fontSize: 11, color: '#8b949e' }}>Eigenkapital (netto)</span>
+                <span style={{ fontSize: 11, color: '#8b949e' }}>{tr('common.equityNet')}</span>
                 <span style={{ fontWeight: 800, color: equity >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(equity)}</span>
               </div>
               {equity < 0 && (
                 <div style={{ fontSize: 10, color: '#ff7b7b', marginTop: 6, lineHeight: 1.4 }}>
-                  Restschuld liegt über dem Marktwert — Wert in „Bearbeiten“ anpassen.
+                  {tr('common.underwaterHint')}
                 </div>
               )}
             </div>
           )}
           <Bar pct={pct} color="#f0883e" />
-          <div style={{ fontSize: 11, color: '#7d8590', textAlign: 'right', marginTop: 4 }}>{Math.round(pct)}% getilgt</div>
+          <div style={{ fontSize: 11, color: '#7d8590', textAlign: 'right', marginTop: 4 }}>{Math.round(pct)}% {tr('common.repaid')}</div>
           {otherOpenInGroup > 0 && (
             <div style={{ fontSize: 10, color: '#5b93ff', marginTop: 8, lineHeight: 1.4 }}>
               Tipp: Wenn diese Schuld weg ist, kannst du die frei werdende Rate bei {otherOpenInGroup} weiteren Posten in dieser Gruppe anheben. ⚡
             </div>
           )}
           <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 11, color: '#7d8590', marginBottom: 6 }}>Monatliche Rate (€)</div>
+            <div style={{ fontSize: 11, color: '#7d8590', marginBottom: 6 }}>{tr('common.monthlyRate')}</div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' as const }}>
               <input
                 type="number"
@@ -6561,7 +6543,7 @@ export default function AllWin() {
                   fontWeight: 700,
                 }}
               />
-              <span style={{ fontSize: 11, color: '#7d8590' }}>pro Rate-Zahlung abgezogen</span>
+              <span style={{ fontSize: 11, color: '#7d8590' }}>{tr('common.perPayment')}</span>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' as const }}>
@@ -6582,7 +6564,7 @@ export default function AllWin() {
               }}
               onClick={() => payDebt(d.id)}
             >
-              ⚡ Rate zahlen
+              {tr('boost.payRate')}
             </button>
             <button
               type="button"
@@ -6600,7 +6582,7 @@ export default function AllWin() {
               }}
               onClick={() => settleDebtFull(d.id)}
             >
-              ✅ Komplett bezahlt
+              {tr('boost.payFull')}
             </button>
             <button
               type="button"
@@ -6618,7 +6600,7 @@ export default function AllWin() {
               }}
               onClick={() => startEditDebt(d.id)}
             >
-              ✏️ Bearbeiten
+              {tr('boost.edit')}
             </button>
           </div>
         </div>
@@ -6664,20 +6646,20 @@ export default function AllWin() {
             <div style={{ minWidth: 0 }}>
               <div style={S.label}>{title}</div>
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6 }}>
-                {groupDebts.length} {groupDebts.length === 1 ? 'Schuld' : 'Schulden'} · Restsumme{' '}
+                {groupDebts.length} {groupDebts.length === 1 ? tr('common.debt') : tr('common.debts')} · {tr('common.restSum')}{' '}
                 <strong style={{ color: '#f0883e' }}>{fmt(groupSum)}</strong>
                 {monthlySum > 0 ? (
                   <>
                     {' '}
-                    · Raten gesamt <strong style={{ color: '#e6edf3' }}>{fmt(monthlySum)}</strong>/Monat
+                    · {tr('common.totalRates')} <strong style={{ color: '#e6edf3' }}>{fmt(monthlySum)}</strong>{tr('common.perMonth')}
                   </>
                 ) : null}
                 {showPropertyMetrics && housePropertySum > 0 ? (
                   <>
                     <div style={{ marginTop: 6 }}>
-                      Marktwert gesamt <strong style={{ color: '#93c5fd' }}>{fmt(housePropertySum)}</strong>
+                      {tr('common.marketValueTotal')} <strong style={{ color: '#93c5fd' }}>{fmt(housePropertySum)}</strong>
                       {' · '}
-                      Eigenkapital gesamt <strong style={{ color: houseEquitySum >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(houseEquitySum)}</strong>
+                      {tr('common.equityTotal')} <strong style={{ color: houseEquitySum >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(houseEquitySum)}</strong>
                     </div>
                   </>
                 ) : null}
@@ -6704,7 +6686,7 @@ export default function AllWin() {
                     flexWrap: 'wrap' as const,
                   }}
                 >
-                  <span>Immobilie netto (Marktwert − Kredite)</span>
+                  <span>{tr('common.propertyNet')}</span>
                   <span style={{ fontWeight: 800, color: houseEquitySum >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(houseEquitySum)}</span>
                 </div>
               )}
@@ -6722,13 +6704,13 @@ export default function AllWin() {
                     flexWrap: 'wrap' as const,
                   }}
                 >
-                  <span>Gruppensumme (noch offen)</span>
+                  <span>{tr('common.groupSumOpen')}</span>
                   <span style={{ fontWeight: 800, color: '#f0883e' }}>{fmt(groupSum)}</span>
                 </div>
               )}
             </>
           ) : (
-            <div style={{ fontSize: 11, color: '#7d8590' }}>Zugeklappt — antippen zum Anzeigen.</div>
+            <div style={{ fontSize: 11, color: '#7d8590' }}>{tr('common.collapsed')}</div>
           )}
         </div>
       );
@@ -6737,29 +6719,29 @@ export default function AllWin() {
     return (
     <div style={S.section}>
       <div data-tour="boost-debts" style={{ ...S.card, background: '#1a1208', border: '1px solid #f0883e33' }}>
-        <div style={S.label}>⚡ Gesamtschulden</div>
+        <div style={S.label}>{tr('boost.totalDebt')}</div>
         <div style={{ ...S.bigNum, color: '#f0883e' }}>{fmt(totalDebt)}</div>
-        <div style={{ fontSize: 12, color: '#7d8590', marginTop: 4 }}>Du schaffst das! Jede Tilgung bringt dich näher zur Freiheit. 💪</div>
+        <div style={{ fontSize: 12, color: '#7d8590', marginTop: 4 }}>{tr('boost.motivation')}</div>
         <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' as const }}>
           <div style={{ flex: 1, minWidth: 150, border: '1px solid #f0883e44', borderRadius: 10, padding: '8px 10px', background: '#0f141b' }}>
-            <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>🏠 Hauskredit (gesamt)</div>
+            <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>{tr('boost.houseLoanTotal')}</div>
             <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: '#f0883e' }}>{fmt(houseDebtSum)}</div>
           </div>
           <div style={{ flex: 1, minWidth: 150, border: '1px solid #f0883e44', borderRadius: 10, padding: '8px 10px', background: '#0f141b' }}>
-            <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>💳 Kreditschulden (gesamt)</div>
+            <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>{tr('boost.consumerDebtsTotal')}</div>
             <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: '#f0883e' }}>{fmt(consumerDebtSum)}</div>
           </div>
           {housePropertySum > 0 && (
             <div style={{ flex: 1, minWidth: 150, border: '1px solid #2563eb44', borderRadius: 10, padding: '8px 10px', background: '#0f141b' }}>
-              <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>🏠 Immobilien-Eigenkapital</div>
+              <div style={{ fontSize: 10, color: '#8b949e', fontWeight: 700 }}>{tr('boost.propertyEquity')}</div>
               <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: houseEquitySum >= 0 ? '#2563eb' : '#ff7b7b' }}>{fmt(houseEquitySum)}</div>
-              <div style={{ fontSize: 10, color: '#7d8590', marginTop: 4 }}>Marktwert {fmt(housePropertySum)} − Kredit {fmt(houseDebtSum)}</div>
+              <div style={{ fontSize: 10, color: '#7d8590', marginTop: 4 }}>{tr('common.marketMinusLoan', { marketValue: fmt(housePropertySum), loan: fmt(houseDebtSum) })}</div>
             </div>
           )}
         </div>
         {levelUpLocked && housePropertySum === 0 && houseDebts.length > 0 && (
           <div style={{ fontSize: 11, color: '#7d8590', marginTop: 10, lineHeight: 1.45 }}>
-            Tipp: Unter „Hauskredit“ bei jeder Immobilie den <strong style={{ color: '#c9d1d9' }}>Marktwert</strong> eintragen (Bearbeiten) — dann siehst du dein Eigenkapital auch ohne LevelUp.
+            {tr('common.housePropertyTip')}
           </div>
         )}
       </div>
@@ -6767,15 +6749,15 @@ export default function AllWin() {
       <div style={{ ...S.card, border: '1px solid #2563eb33' }}>
         <div style={{ ...S.row, alignItems: 'center' }}>
           <div>
-            <div style={S.label}>➕ Neue Schuld</div>
+            <div style={S.label}>{tr('boost.newDebt')}</div>
             <div style={{ fontSize: 11, color: '#7d8590', marginTop: 2 }}>
-              {editingDebtId != null ? 'Schuld bearbeiten (Name, Betrag, Zinsen, Rate, Typ)' : 'Name, Betrag, Zinsen & Rate erfassen'}
+              {editingDebtId != null ? tr('common.editDebtForm') : tr('common.newDebtForm')}
             </div>
           </div>
           <button
             type="button"
             aria-expanded={debtAddOpen}
-            aria-label={debtAddOpen ? 'Formular schließen' : 'Neue Schuld hinzufügen'}
+            aria-label={debtAddOpen ? tr('common.closeForm') : tr('common.openDebtForm')}
             onClick={() => setDebtAddOpen((o) => !o)}
             style={{
               width: 48,
@@ -6802,36 +6784,36 @@ export default function AllWin() {
           <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <input
               style={S.input}
-              placeholder="Name (z. B. Kreditkarte)"
+              placeholder={tr('common.debtNamePlaceholder')}
               value={newDebtName}
               onChange={(e) => setNewDebtName(e.target.value)}
             />
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="button" style={{ ...S.chip(newDebtKind === 'consumer'), flex: 1, marginTop: 0 }} onClick={() => setNewDebtKind('consumer')}>
-                Dispo / Konsum
+                {tr('common.consumer')}
               </button>
               <button type="button" style={{ ...S.chip(newDebtKind === 'house'), flex: 1, marginTop: 0 }} onClick={() => setNewDebtKind('house')}>
-                Hauskredit
+                {tr('common.houseLoan')}
               </button>
             </div>
             <input
               style={S.input}
               inputMode="decimal"
-              placeholder={`Gesamtbetrag / Schuldenhöhe (${moneyCurrencySymbol(baseCurrency)})`}
+              placeholder={tr('common.debtTotalPlaceholder', { symbol: moneyCurrencySymbol(baseCurrency) })}
               value={newDebtTotal}
               onChange={(e) => setNewDebtTotal(e.target.value)}
             />
             <input
               style={S.input}
               inputMode="decimal"
-              placeholder="Zinsen p.a. in % (0 wenn zinsfrei)"
+              placeholder={tr('common.debtInterestPlaceholder')}
               value={newDebtInterest}
               onChange={(e) => setNewDebtInterest(e.target.value)}
             />
             <input
               style={S.input}
               inputMode="decimal"
-              placeholder={`Monatliche Rate (${moneyCurrencySymbol(baseCurrency)})`}
+              placeholder={tr('common.debtMonthlyPlaceholder', { symbol: moneyCurrencySymbol(baseCurrency) })}
               value={newDebtMonthly}
               onChange={(e) => setNewDebtMonthly(e.target.value)}
             />
@@ -6840,18 +6822,18 @@ export default function AllWin() {
                 <input
                   style={S.input}
                   inputMode="decimal"
-                  placeholder={`Marktwert der Immobilie (${moneyCurrencySymbol(baseCurrency)}, optional)`}
+                  placeholder={tr('common.propertyValuePlaceholder', { symbol: moneyCurrencySymbol(baseCurrency) })}
                   value={newDebtPropertyValue}
                   onChange={(e) => setNewDebtPropertyValue(e.target.value)}
                 />
                 <div style={{ fontSize: 11, color: '#7d8590', lineHeight: 1.45, marginTop: -4 }}>
-                  Gegenwert der Immobilie — auch ohne LevelUp. Eigenkapital = Marktwert minus noch offene Restschuld.
+                  {tr('common.propertyValueHint')}
                 </div>
               </>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <button type="button" style={{ ...S.btn(), flex: 1, marginTop: 0 }} onClick={addDebtEntry}>
-                {editingDebtId != null ? '✅ Änderungen speichern' : '✅ Schuld speichern'}
+                {editingDebtId != null ? tr('common.saveDebtChanges') : tr('common.saveDebt')}
               </button>
               <button
                 type="button"
@@ -6865,7 +6847,7 @@ export default function AllWin() {
                   resetDebtForm();
                 }}
               >
-                Abbrechen
+                {tr('common.cancel')}
               </button>
             </div>
           </div>
@@ -6875,13 +6857,13 @@ export default function AllWin() {
       {activeDebts.length === 0 && (
         <div style={{ ...S.card, border: `1px dashed ${awBg.line}`, background: awBg.hole }}>
           <div style={{ fontSize: 13, color: '#7d8590', textAlign: 'center' }}>
-            Aktuell keine offene Schuld. Erfasse oben eine neue oder schau ins Archiv. ✨
+            {tr('common.noOpenDebts')}
           </div>
         </div>
       )}
 
       {renderDebtGroup(
-        '🏠 Hauskredit',
+        tr('boost.houseLoans'),
         houseDebts,
         houseDebtSum,
         houseMonthlySum,
@@ -6890,7 +6872,7 @@ export default function AllWin() {
         true,
       )}
       {renderDebtGroup(
-        '💳 Kreditschulden',
+        tr('boost.consumerDebts'),
         consumerDebts,
         consumerDebtSum,
         consumerMonthlySum,
@@ -6915,7 +6897,7 @@ export default function AllWin() {
               padding: '4px 0 8px',
             }}
           >
-            <span style={{ ...S.label, margin: 0 }}>📂 Archiv ({archivedDebts.length})</span>
+            <span style={{ ...S.label, margin: 0 }}>{tr('boost.archive', { count: String(archivedDebts.length) })}</span>
             <span style={{ fontSize: 14, color: '#7d8590' }}>{debtArchiveOpen ? '▾' : '▸'}</span>
           </button>
           {debtArchiveOpen && (
@@ -6936,12 +6918,12 @@ export default function AllWin() {
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: 13, color: '#7d8590' }}>{d.name}</div>
                     <div style={{ fontSize: 11, color: '#484f58', marginTop: 2 }}>
-                      Ursprung {fmt(d.total)}
+                      {tr('common.origin')} {fmt(d.total)}
                       {d.interest > 0 ? ` · ${d.interest}% p.a.` : ''}
                     </div>
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: '#2563eb' }}>✅ Abbezahlt</div>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: '#2563eb' }}>✅ {tr('common.paidOff')}</div>
                     <div style={{ fontSize: 10, color: '#484f58', marginTop: 2 }}>{d.archivedAt || 'Archiv'}</div>
                   </div>
                 </div>
@@ -6958,29 +6940,37 @@ export default function AllWin() {
     <div style={S.section}>
       {onboardingV2?.invest && !levelUpLocked && (
         <div style={{ ...S.card, border: `1px solid ${awBg.line}`, marginBottom: 12 }}>
-          <div style={S.label}>📋 Aus deinem Onboarding</div>
+          <div style={S.label}>{tr('levelup.fromOnboarding')}</div>
           <div style={{ fontSize: 12, color: '#c9d1d9', lineHeight: 1.5, marginTop: 6 }}>
-            Risiko: {onboardingV2.invest.risk === 'low' ? 'konservativ' : onboardingV2.invest.risk === 'high' ? 'aggressiv' : 'ausgewogen'} · ca. investiert:{' '}
-            {fmt(onboardingV2.invest.approxInvested)} · monatlich geplant: {fmt(onboardingV2.invest.monthlyWant)}
+            {tr('common.onboardingInvest', {
+              risk:
+                onboardingV2.invest.risk === 'low'
+                  ? tr('common.riskConservative')
+                  : onboardingV2.invest.risk === 'high'
+                    ? tr('common.riskAggressive')
+                    : tr('common.riskBalanced'),
+              invested: fmt(onboardingV2.invest.approxInvested),
+              monthly: fmt(onboardingV2.invest.monthlyWant),
+            })}
           </div>
           {onboardingV2.whyHere?.length > 0 && (
-            <div style={{ fontSize: 11, color: '#7d8590', marginTop: 8 }}>Warum hier: {onboardingV2.whyHere.join(', ')}</div>
+            <div style={{ fontSize: 11, color: '#7d8590', marginTop: 8 }}>{tr('common.whyHere', { reasons: onboardingV2.whyHere.join(', ') })}</div>
           )}
           <div style={{ fontSize: 11, color: '#5b93ff', marginTop: 10, lineHeight: 1.45 }}>
-            Watchlist-Stückzahlen: automatische Verteilung oder die Zuordnung pro Zeile aus dem Onboarding (Kaufpreis × Menge → EUR auf gewähltes Symbol). Anpassen jederzeit unter „Order in Stückzahl“.
+            {tr('common.watchlistHint')}
           </div>
         </div>
       )}
       {levelUpLocked && (
         <div style={{ ...S.card, border: '1px solid #f0883e55', background: '#1a1208', marginBottom: 12 }}>
-          <div style={S.label}>LevelUp gesperrt</div>
+          <div style={S.label}>{tr('levelup.locked')}</div>
           <div style={{ fontSize: 14, color: '#c9d1d9', lineHeight: 1.55, marginTop: 8 }}>
             {levelUpMode === 'until_all_debts' && (
-              <>Zuerst alle Schulden tilgen — danach schalten wir LevelUp automatisch frei.</>
+              <>{tr('common.levelUpDebts')}</>
             )}
             {levelUpMode === 'until_emergency_half' && (
               <>
-                Bitte baut euer Notgroschen auf mindestens die Hälfte des Ziels ({fmt(notgroschenTarget * 0.5)} von {fmt(notgroschenTarget)}) — Stand unter Home über ⋮ → „Stand bearbeiten“.
+                {tr('common.levelUpEmergency', { half: fmt(notgroschenTarget * 0.5), target: fmt(notgroschenTarget) })}
               </>
             )}
           </div>
@@ -6992,7 +6982,7 @@ export default function AllWin() {
             type="button"
             aria-expanded={portfolioCashMenuOpen}
             aria-haspopup="menu"
-            aria-label="Portfolio-Cash-Optionen"
+            aria-label={tr('common.portfolioCashOptions')}
             onClick={() => setPortfolioCashMenuOpen((o) => !o)}
             style={{
               background: '#24242c',
@@ -7049,7 +7039,7 @@ export default function AllWin() {
                   cursor: 'pointer',
                 }}
               >
-                Cash Depot bearbeiten
+                {tr('common.editCashDepot')}
               </button>
             </div>
           )}
@@ -7077,19 +7067,19 @@ export default function AllWin() {
               </span>
               <div style={S.label}>💎 Portfolio Power</div>
             </div>
-            <div style={{ fontSize: 10, color: '#7d8590' }}>Live</div>
+            <div style={{ fontSize: 10, color: '#7d8590' }}>{tr('common.live')}</div>
           </div>
         </button>
         <div
           style={{ fontSize: 11, color: '#7d8590', marginBottom: 4, letterSpacing: '0.06em', textTransform: 'uppercase' as const, fontWeight: 700 }}
         >
-          Gesamt (Positionen + Cash Depot)
+          {tr('levelup.totalLabel')}
         </div>
         <div style={{ ...S.bigNum, color: '#a855f7' }}>{fmt(portfolioTotalPower)}</div>
         <div style={{ marginTop: 8, paddingTop: 10, borderTop: `1px solid ${awBg.line}` }}>
-          <div style={{ fontSize: 11, color: '#7d8590', marginBottom: 4 }}>Cash Depot (nicht investiert)</div>
+          <div style={{ fontSize: 11, color: '#7d8590', marginBottom: 4 }}>{tr('levelup.cashDepot')}</div>
           <div style={{ fontSize: 18, fontWeight: 800, color: '#c9d1d9' }}>{fmt(portfolioBrokerCash)}</div>
-          <div style={{ fontSize: 11, color: '#7d8590', marginTop: 6 }}>Davon investiert (Positionen): {fmt(portfolioValue)}</div>
+          <div style={{ fontSize: 11, color: '#7d8590', marginTop: 6 }}>{tr('levelup.invested')} {fmt(portfolioValue)}</div>
           {portfolioCashEditing && (
             <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
               <input
@@ -7098,7 +7088,7 @@ export default function AllWin() {
                 autoFocus
                 value={portfolioCashDraft}
                 onChange={(e) => setPortfolioCashDraft(e.target.value)}
-                placeholder="z. B. 1500"
+                placeholder={tr('common.cashPlaceholder')}
               />
               <button
                 type="button"
@@ -7107,15 +7097,15 @@ export default function AllWin() {
                   const raw = portfolioCashDraft.replace(/\s/g, '').replace(',', '.');
                   const n = parseFloat(raw);
                   if (Number.isNaN(n) || n < 0) {
-                    showToast('Bitte einen gültigen Cash-Wert eingeben.', 'error');
+                    showToast(tr('toast.invalidCashValue'), 'error');
                     return;
                   }
                   setPortfolioBrokerCash(Math.round(n * 100) / 100);
                   setPortfolioCashEditing(false);
-                  showToast('Cash Depot aktualisiert ✅');
+                  showToast(tr('toast.cashDepotUpdated'));
                 }}
               >
-                Speichern
+                {tr('common.save')}
               </button>
               <button
                 type="button"
@@ -7125,7 +7115,7 @@ export default function AllWin() {
                   setPortfolioCashDraft('');
                 }}
               >
-                Abbrechen
+                {tr('common.cancel')}
               </button>
             </div>
           )}
@@ -7133,7 +7123,7 @@ export default function AllWin() {
         {levelUpPortfolioOpen && (
           <>
             {(() => {
-              const b = portfolioPowerBadgeFor(portfolioTotalPower);
+              const b = portfolioPowerBadgeFor(portfolioTotalPower, locale);
               return b ? (
                 <div style={{ fontSize: b.fontSize, fontWeight: b.fontWeight, color: b.color, marginTop: 4 }}>
                   {b.emoji ? `${b.emoji} ` : ''}
@@ -7164,7 +7154,7 @@ export default function AllWin() {
             <button
               type="button"
               aria-expanded={expanded}
-              aria-label={`${m.sym}: Kurs und groben Verlauf ${expanded ? 'ausblenden' : 'anzeigen'}`}
+              aria-label={tr('common.showHideHistory', { sym: m.sym, action: expanded ? tr('common.hide') : tr('common.show') })}
               onClick={() => {
                 const next = expanded ? null : m.sym;
                 setMarketDetailSym(next);
@@ -7190,7 +7180,7 @@ export default function AllWin() {
                 <div style={{ fontSize: 11, color: '#7d8590', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {display.subtitle}
                   {display.subtitle ? ' · ' : ''}
-                  {expanded ? 'Verlauf ▲' : 'Verlauf ▶'}
+                  {expanded ? tr('common.historyExpanded') : tr('common.historyCollapsed')}
                 </div>
               </div>
               <div
@@ -7203,12 +7193,12 @@ export default function AllWin() {
                   marginLeft: 4,
                   marginRight: 4,
                 }}
-                title="30-Tage-Verlauf"
+                title={tr('common.history30d')}
               >
                 <Spark data={sparkData} color={m.change >= 0 ? '#2563eb' : '#ff7b7b'} />
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0, minWidth: 92 }}>
-                <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 600, marginBottom: 2 }}>Kurs</div>
+                <div style={{ fontSize: 10, color: '#7d8590', fontWeight: 600, marginBottom: 2 }}>{tr('common.course')}</div>
                 <div style={{ fontWeight: 800, fontSize: 14, color: '#e6edf3' }}>{m.price > 0 ? fmt(m.price) : '…'}</div>
                 <div style={{ fontSize: 12, color: m.change >= 0 ? '#2563eb' : '#ff7b7b', fontWeight: 700, marginTop: 2 }}>
                   {m.change >= 0 ? '▲' : '▼'} {Math.abs(m.change).toFixed(2)}%
@@ -7218,7 +7208,7 @@ export default function AllWin() {
             {!BASE_SYM_SET.has(m.sym) ? (
               <button
                 type="button"
-                aria-label={`${m.sym} aus Watchlist entfernen`}
+                aria-label={tr('common.removeFromWatchlist', { sym: m.sym })}
                 onClick={() => {
                   if (marketDetailSym === m.sym) setMarketDetailSym(null);
                   removeWatchlistInstrument(m.sym);
@@ -7252,14 +7242,14 @@ export default function AllWin() {
             >
               <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
                 {marketHistoryLoading === m.sym
-                  ? 'Kursverlauf wird geladen…'
+                  ? tr('common.loadingHistory')
                   : m.historySource
-                    ? `Quelle: ${m.historySource} · 30 Handelstage · Schlusskurse in EUR`
-                    : 'Tages-Schlusskurse in EUR'}
+                    ? tr('common.historySource', { source: m.historySource })
+                    : tr('common.dailyCloseEur')}
                 {range ? (
                   <>
                     {' '}
-                    · Spanne <strong style={{ color: '#c9d1d9' }}>{fmt(range.min)}</strong> –{' '}
+                    · {tr('common.range')} <strong style={{ color: '#c9d1d9' }}>{fmt(range.min)}</strong> –{' '}
                     <strong style={{ color: '#c9d1d9' }}>{fmt(range.max)}</strong>
                   </>
                 ) : null}
@@ -7276,8 +7266,8 @@ export default function AllWin() {
                   borderBottom: `1px solid ${awBg.line}`,
                 }}
               >
-                <span>Datum</span>
-                <span style={{ textAlign: 'right' }}>Schluss €</span>
+                <span>{tr('common.date')}</span>
+                <span style={{ textAlign: 'right' }}>{tr('common.closePrice')}</span>
               </div>
               <div style={{ maxHeight: 168, overflowY: 'auto' as const, WebkitOverflowScrolling: 'touch' }}>
                 {[...hist].reverse().map((pt) => (
@@ -7306,10 +7296,10 @@ export default function AllWin() {
 
     const freeCard = (
       <div style={{ ...S.card, border: '1px solid #f8d03a55', background: 'linear-gradient(135deg,#231f0d,#2e2810)' }}>
-        <div style={{ ...S.label, color: '#f8d03a' }}>💎 Premium Feature</div>
-        <div style={{ fontSize: 14, marginBottom: 10 }}>Live-Marktdaten sind im Finance-Free-Paket gesperrt. Upgrade und ab geht's! 📈</div>
+        <div style={{ ...S.label, color: '#f8d03a' }}>{tr('levelup.premium')}</div>
+        <div style={{ fontSize: 14, marginBottom: 10 }}>{tr('common.premiumLocked')}</div>
         <button type="button" style={S.btn('#7c3aed')} onClick={() => setTab('profile')}>
-          🚀 Jetzt Upgrade ansehen
+          {tr('common.upgradeNow')}
         </button>
       </div>
     );
@@ -7318,7 +7308,7 @@ export default function AllWin() {
       <>
         {!collapsible && (
           <div style={{ ...S.row, marginBottom: 4 }}>
-            <div style={S.label}>📡 Live Marktdaten</div>
+            <div style={S.label}>{tr('levelup.liveMarket')}</div>
             <div style={{ fontSize: 10, color: '#2563eb' }}>● Live</div>
           </div>
         )}
@@ -7351,14 +7341,14 @@ export default function AllWin() {
                     <span style={{ fontSize: 12, color: '#8b949e', width: 14, flexShrink: 0 }} aria-hidden>
                       {levelUpMarketOpen ? '▼' : '▶'}
                     </span>
-                    <div style={S.label}>📡 Live Marktdaten</div>
+                    <div style={S.label}>{tr('levelup.liveMarket')}</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {!levelUpLocked ? (
                       <button
                         type="button"
-                        aria-label={liveMarketAddOpen ? 'Hinzufügen schließen' : 'Instrument zur Watchlist hinzufügen'}
-                        title="Instrument hinzufügen"
+                        aria-label={liveMarketAddOpen ? tr('common.closeAdd') : tr('common.addToWatchlist')}
+                        title={tr('common.addInstrument')}
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
@@ -7389,17 +7379,17 @@ export default function AllWin() {
                         +
                       </button>
                     ) : null}
-                    <div style={{ fontSize: 9, color: '#f8d03a', fontWeight: 700 }}>Finance Free</div>
+                    <div style={{ fontSize: 9, color: '#f8d03a', fontWeight: 700 }}>{tr('common.financeFree')}</div>
                   </div>
                 </div>
               </button>
               {levelUpMarketOpen && (
                 <>
                   {!levelUpLocked && liveMarketAddOpen && renderInstrumentAddForm(() => setLiveMarketAddOpen(false), { watchlistOnly: true })}
-                  <div style={{ ...S.label, color: '#f8d03a' }}>💎 Premium Feature</div>
-                  <div style={{ fontSize: 14, marginBottom: 10 }}>Live-Marktdaten sind im Finance-Free-Paket gesperrt. Upgrade und ab geht's! 📈</div>
+                  <div style={{ ...S.label, color: '#f8d03a' }}>{tr('levelup.premium')}</div>
+                  <div style={{ fontSize: 14, marginBottom: 10 }}>{tr('common.premiumLocked')}</div>
                   <button type="button" style={S.btn('#7c3aed')} onClick={() => setTab('profile')}>
-                    🚀 Jetzt Upgrade ansehen
+                    {tr('common.upgradeNow')}
                   </button>
                 </>
               )}
@@ -7427,14 +7417,14 @@ export default function AllWin() {
                     <span style={{ fontSize: 12, color: '#8b949e', width: 14, flexShrink: 0 }} aria-hidden>
                       {levelUpMarketOpen ? '▼' : '▶'}
                     </span>
-                    <div style={S.label}>📡 Live Marktdaten</div>
+                    <div style={S.label}>{tr('levelup.liveMarket')}</div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {!levelUpLocked ? (
                       <button
                         type="button"
-                        aria-label={liveMarketAddOpen ? 'Hinzufügen schließen' : 'Instrument zur Watchlist hinzufügen'}
-                        title="Instrument hinzufügen"
+                        aria-label={liveMarketAddOpen ? tr('common.closeAdd') : tr('common.addToWatchlist')}
+                        title={tr('common.addInstrument')}
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
@@ -7473,8 +7463,7 @@ export default function AllWin() {
                 <>
                   {!levelUpLocked && liveMarketAddOpen && renderInstrumentAddForm(() => setLiveMarketAddOpen(false), { watchlistOnly: true })}
                   <div style={{ fontSize: 10, color: '#7d8590', marginBottom: 8, lineHeight: 1.45 }}>
-                    Kurse in <strong style={{ color: '#c9d1d9' }}>€ je Stück</strong> (CoinGecko / Yahoo Finance, Aktien ggf. USD→EUR). Tagesänderung in
-                    %. Zeile antippen für <strong style={{ color: '#c9d1d9' }}>30-Tage-Historie</strong> — Aktualisierung ca. alle 90&nbsp;s.
+                    {tr('common.marketDataHint')}
                   </div>
                   {rows}
                 </>
@@ -7524,41 +7513,32 @@ export default function AllWin() {
           >
             <div style={{ ...S.row, marginBottom: 10 }}>
               <div style={{ fontSize: 17, fontWeight: 800 }}>
-                {legalSheet === 'impressum' && 'Impressum'}
-                {legalSheet === 'rechtlich' && 'Rechtliches'}
-                {legalSheet === 'disclaimer' && 'Keine Anlageberatung'}
+                {legalSheet === 'impressum' && tr('profile.legalImpressumTitle')}
+                {legalSheet === 'rechtlich' && tr('profile.legalLegalTitle')}
+                {legalSheet === 'disclaimer' && tr('profile.legalDisclaimerTitle')}
               </div>
               <button type="button" style={{ ...S.chip(false), padding: '6px 12px' }} onClick={() => setLegalSheet(null)}>
-                Schließen
+                {tr('common.close')}
               </button>
             </div>
             {legalSheet === 'impressum' && (
               <div style={{ fontSize: 13, color: '#c9d1d9', lineHeight: 1.55 }}>
-                <p style={{ marginBottom: 10 }}>
-                  <strong>Clever Finance</strong> — Informationsangebot zur persönlichen Finanzübersicht (Demo / Entwicklungsstand).
-                </p>
-                <p style={{ marginBottom: 10 }}>
-                  Verantwortlich im Sinne von § 5 TMG (Muster): Clever Finance Demo, Musterstraße 1, 10115 Berlin. Kontakt: support@example.invalid
-                </p>
-                <p style={{ fontSize: 12, color: '#7d8590' }}>Bitte ersetze diese Platzhalter-Daten durch deine echten Angaben, sobald die App öffentlich geht.</p>
+                <p style={{ marginBottom: 10 }}>{tr('profile.legalImpressumP1')}</p>
+                <p style={{ marginBottom: 10 }}>{tr('profile.legalImpressumP2')}</p>
+                <p style={{ fontSize: 12, color: '#7d8590' }}>{tr('profile.legalImpressumP3')}</p>
               </div>
             )}
             {legalSheet === 'rechtlich' && (
               <div style={{ fontSize: 13, color: '#c9d1d9', lineHeight: 1.55 }}>
-                <p style={{ marginBottom: 10 }}>
-                  Es gelten die Nutzungsbedingungen deines Hosting- und Zahlungsanbieters. In dieser Version werden keine Rechts- oder Steuerberatungen erteilt.
-                </p>
-                <p style={{ marginBottom: 10 }}>Bei Streitigkeiten zu Abos (Stripe o. Ä.) wende dich bitte an den jeweiligen Anbieter und prüfe deine E-Mail-Bestätigungen.</p>
-                <p style={{ fontSize: 12, color: '#7d8590' }}>Für verbindliche AGB / Datenschutzerklärung bitte separate Dokumente einbinden.</p>
+                <p style={{ marginBottom: 10 }}>{tr('profile.legalLegalP1')}</p>
+                <p style={{ marginBottom: 10 }}>{tr('profile.legalLegalP2')}</p>
+                <p style={{ fontSize: 12, color: '#7d8590' }}>{tr('profile.legalLegalP3')}</p>
               </div>
             )}
             {legalSheet === 'disclaimer' && (
               <div style={{ fontSize: 13, color: '#c9d1d9', lineHeight: 1.55 }}>
-                <p style={{ marginBottom: 10 }}>
-                  Die App zeigt Marktdaten, Beispielkurse und Simulationen. Das ist <strong>keine Anlageberatung</strong>, kein Werben für Wertpapiere und keine
-                  persönliche Empfehlung (§§ 2, 3 WpIG analog — nur inhaltlicher Hinweis).
-                </p>
-                <p style={{ marginBottom: 10 }}>Investitionsentscheidungen triffst du allein auf eigene Recherche und Risiko.</p>
+                <p style={{ marginBottom: 10 }}>{tr('profile.legalDisclaimerP1')}</p>
+                <p style={{ marginBottom: 10 }}>{tr('profile.legalDisclaimerP2')}</p>
               </div>
             )}
           </div>
@@ -7572,10 +7552,10 @@ export default function AllWin() {
               Clever <span style={{ color: '#d485ff', fontWeight: 900 }}>Finance</span>
             </div>
             <div style={{ fontSize: 12, color: '#7d8590', marginTop: 4 }}>
-              Pakete & Abrechnung — aktuell: {PRICING[subEffective.tier].name}
+              {tr('profile.packages', { plan: PRICING[subEffective.tier].name })}
               {DEV_FORCE_ELITE && sub.tier !== 'elite' && (
                 <span style={{ display: 'block', marginTop: 4, color: '#5b93ff', fontSize: 11 }}>
-                  Dev: Features wie Elite freigeschaltet (VITE_DEV_FORCE_ELITE=0 zum Abschalten)
+                  {tr('profile.devElite')}
                 </span>
               )}
             </div>
@@ -7609,13 +7589,13 @@ export default function AllWin() {
       </div>
 
       <div style={S.card}>
-        <div style={S.label}>⚖️ Impressum & Hinweise</div>
-        <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10 }}>Kurzinfos — bitte vor Go-live durch echte Texte deines Unternehmens ersetzen.</div>
+        <div style={S.label}>{tr('profile.legalMenu')}</div>
+        <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10 }}>{tr('profile.legalHint')}</div>
         {(
           [
-            ['impressum', '📋 Impressum'],
-            ['rechtlich', '📜 Rechtliches'],
-            ['disclaimer', '⚠️ Keine Anlageberatung'],
+            ['impressum', tr('profile.impressumBtn')],
+            ['rechtlich', tr('profile.legalBtn')],
+            ['disclaimer', tr('profile.disclaimerBtn')],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -7631,15 +7611,15 @@ export default function AllWin() {
       </div>
 
       <div style={S.card}>
-        <div style={S.label}>🎮 Onboarding</div>
+        <div style={S.label}>{tr('profile.onboardingSection')}</div>
         <div style={{ fontSize: 12, color: '#7d8590', marginTop: 6, lineHeight: 1.5 }}>
-          Führung nochmal durchlaufen (deine Daten bleiben erhalten). Mit Account wird der Fortschritt ans Backend mitgeschickt.
+          {tr('profile.onboardingHint')}
         </div>
         <button type="button" style={{ ...S.btn(awBg.mutedBtn), marginTop: 12 }} onClick={restartOnboarding}>
-          Onboarding erneut starten
+          {tr('profile.restartOnboarding')}
         </button>
         <button type="button" style={{ ...S.btn('#1f3a5f'), marginTop: 8, border: '1px solid #58a6ff66' }} onClick={startAppTour}>
-          🗺️ App-Tour mit Licht & Sprechblase
+          {tr('profile.appTour')}
         </button>
       </div>
 
@@ -7647,22 +7627,21 @@ export default function AllWin() {
         <>
           {PUBLIC_BETA && (
             <div style={{ ...S.card, border: '1px solid #58a6ff66', background: '#121820' }}>
-              <div style={S.label}>🧪 Öffentliche Testphase</div>
+              <div style={S.label}>{tr('profile.publicBeta')}</div>
               <div style={{ fontSize: 13, color: '#c9d1d9', marginTop: 8, lineHeight: 1.55 }}>
-                Bis auf Weiteres ist <strong>alles kostenlos</strong> — alle Funktionen (inkl. LevelUp) sind freigeschaltet. Es gibt in dieser Phase
-                kein Bezahlen und keine Abo-Upgrades.
+                {tr('profile.publicBetaBody')}
               </div>
             </div>
           )}
           {!PUBLIC_BETA && (
           <div style={S.card}>
-            <div style={S.label}>🔁 Abrechnungszyklus</div>
+            <div style={S.label}>{tr('profile.billingCycle')}</div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button style={{ ...S.chip(sub.cycle === 'monthly'), flex: 1, padding: '10px 8px' }} onClick={() => setSub((prev) => ({ ...prev, cycle: 'monthly' }))}>
-                Monatlich
+                {tr('profile.monthly')}
               </button>
               <button style={{ ...S.chip(sub.cycle === 'yearly'), flex: 1, padding: '10px 8px' }} onClick={() => setSub((prev) => ({ ...prev, cycle: 'yearly' }))}>
-                Jährlich (-20%)
+                {tr('profile.yearly')}
               </button>
             </div>
           </div>
@@ -7679,11 +7658,11 @@ export default function AllWin() {
                     {plan[sub.cycle].toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
                   </div>
                 </div>
-                <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10 }}>{sub.cycle === 'monthly' ? 'pro Monat' : 'pro Jahr'}</div>
+                <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10 }}>{sub.cycle === 'monthly' ? tr('profile.perMonth') : tr('profile.perYear')}</div>
                 <div style={{ fontSize: 12, marginBottom: 10 }}>
                   {plan.features.map((f) => (
                     <div key={f} style={{ marginBottom: 4 }}>
-                      ✅ {f}
+                      ✅ {tr(`pricing.features.${f}`)}
                     </div>
                   ))}
                 </div>
@@ -7693,21 +7672,21 @@ export default function AllWin() {
                   disabled={active || upgradeLoading}
                 >
                   {active
-                    ? '✅ Aktueller Plan'
+                    ? tr('profile.currentPlan')
                     : tier === 'free'
-                      ? `🛑 Abo kündigen (${PRICING.free.name})`
+                      ? tr('profile.cancelPlan', { name: PRICING.free.name })
                       : upgradeLoading
-                        ? '⏳ Weiterleitung...'
-                        : `🔥 Auf ${plan.name} upgraden`}
+                        ? tr('profile.redirecting')
+                        : `🔥 ${tr('profile.upgradeTo', { name: plan.name })}`}
                 </button>
               </div>
             );
           })}
           {PUBLIC_BETA && (
             <div style={S.card}>
-              <div style={S.label}>✅ Dein Zugang in der Beta</div>
+              <div style={S.label}>{tr('profile.betaAccess')}</div>
               <div style={{ fontSize: 13, color: '#7d8590', marginTop: 8, lineHeight: 1.5 }}>
-                Du nutzt alle Features ohne Limit. Nach der Testphase informieren wir euch, falls kostenpflichtige Pakete kommen.
+                {tr('profile.betaAccessBody')}
               </div>
             </div>
           )}
@@ -7753,12 +7732,12 @@ export default function AllWin() {
 
       {profileSection === 'personal' && (
         <div style={S.card}>
-          <div style={S.label}>👤 Persönliche Angaben</div>
-          <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 8 }}>E-Mail: {authUser?.email}</div>
+          <div style={S.label}>{tr('profile.personal')}</div>
+          <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 8 }}>{tr('profile.email', { email: authUser?.email || '' })}</div>
           <div style={{ display: 'flex', gap: 6 }}>
             <input
               style={{ ...S.input, padding: '10px 12px', fontSize: 14 }}
-              placeholder="Nutzername"
+              placeholder={tr('profile.username')}
               value={profileNameDraft}
               onChange={(e) => setProfileNameDraft(e.target.value)}
             />
@@ -7767,12 +7746,12 @@ export default function AllWin() {
             </button>
           </div>
           <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 6 }}>Geschlecht (freiwillig, für Statistik / Personalisierung)</div>
+            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 6 }}>{tr('profile.gender')}</div>
             <select style={S.select} value={profileGender} onChange={(e) => setProfileGender(e.target.value)}>
-              <option value="">— keine Angabe</option>
-              <option value="m">männlich</option>
-              <option value="w">weiblich</option>
-              <option value="d">divers</option>
+              <option value="">{tr('profile.genderNone')}</option>
+              <option value="m">{tr('profile.genderM')}</option>
+              <option value="w">{tr('profile.genderF')}</option>
+              <option value="d">{tr('profile.genderD')}</option>
             </select>
           </div>
         </div>
@@ -7780,18 +7759,18 @@ export default function AllWin() {
 
       {profileSection === 'feedback' && (
         <div style={{ ...S.card, border: '1px solid #58a6ff55' }}>
-          <div style={S.label}>💬 Feedback & Wünsche</div>
+          <div style={S.label}>{tr('profile.feedback')}</div>
           <div style={{ fontSize: 12, color: '#7d8590', marginTop: 6, marginBottom: 14, lineHeight: 1.5 }}>
-            Was funktioniert nicht? Was können wir besser machen? Was wünschst du dir noch? Dein Text geht direkt an uns (Beta).
+            {tr('profile.feedbackHint')}
           </div>
-          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>Kategorie</div>
+          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>{tr('profile.feedbackCategory')}</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
             {(
               [
-                ['bug', '🐛 Funktioniert nicht'],
-                ['improve', '✨ Verbesserung'],
-                ['feature', '💡 Wunsch / Feature'],
-                ['other', '💬 Sonstiges'],
+                ['bug', tr('profile.feedbackBug')],
+                ['improve', tr('profile.feedbackImprove')],
+                ['feature', tr('profile.feedbackFeature')],
+                ['other', tr('profile.feedbackOther')],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -7810,7 +7789,7 @@ export default function AllWin() {
               </button>
             ))}
           </div>
-          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>Deine Nachricht</div>
+          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>{tr('profile.feedbackMessage')}</div>
           <textarea
             style={{
               ...S.input,
@@ -7820,7 +7799,7 @@ export default function AllWin() {
               lineHeight: 1.45,
               fontFamily: 'inherit',
             }}
-            placeholder="z. B. Sync zwischen iPhone und PC, fehlende Funktion, Idee für Boost …"
+            placeholder={tr('profile.feedbackPlaceholder')}
             value={feedbackMessage}
             onChange={(e) => setFeedbackMessage(e.target.value)}
             maxLength={8000}
@@ -7834,18 +7813,18 @@ export default function AllWin() {
             onClick={() => void submitFeedback()}
             disabled={feedbackSending}
           >
-            {feedbackSending ? '⏳ Wird gesendet…' : '📨 Feedback absenden'}
+            {feedbackSending ? tr('profile.feedbackSending') : tr('profile.feedbackSend')}
           </button>
         </div>
       )}
 
       {profileSection === 'notifications' && (
         <div style={S.card}>
-          <div style={S.label}>🔔 Mitteilungseinstellungen</div>
+          <div style={S.label}>{tr('profile.notifSettings')}</div>
           {[
-            ['suspiciousCharges', 'Verdächtige Abbuchungen'],
-            ['subscriptionChanges', 'Abo-Änderungen'],
-            ['weeklySummary', 'Wöchentliche Zusammenfassung'],
+            ['suspiciousCharges', tr('profile.notifSuspicious')],
+            ['subscriptionChanges', tr('profile.notifSubscription')],
+            ['weeklySummary', tr('profile.notifWeekly')],
           ].map(([k, label]) => (
             <button
               key={k}
@@ -7863,9 +7842,9 @@ export default function AllWin() {
         <div style={{ ...S.card, border: '1px solid #7c3aed44' }}>
           <div style={{ ...S.row, marginBottom: 8, alignItems: 'flex-start' }}>
             <div>
-              <div style={S.label}>🎖️ Meine Orden</div>
+              <div style={S.label}>{tr('profile.orden')}</div>
               <div style={{ fontSize: 12, color: '#7d8590', marginTop: 6, lineHeight: 1.5 }}>
-                Diese Liste kommt vom Creator. Sobald du etwas erreichst, wird der entsprechende Orden automatisch freigeschaltet und eingefärbt — noch nicht Erreichte bleiben grau.
+                {tr('profile.ordenHint')}
               </div>
             </div>
             <div
@@ -7916,7 +7895,7 @@ export default function AllWin() {
                       {orden.title}
                     </div>
                     <div style={{ fontSize: 11, color: unlocked ? '#a855f7' : '#484f58', marginTop: 4, fontWeight: 700 }}>
-                      {unlocked ? '● Freigeschaltet' : '○ Noch nicht erreicht'}
+                      {unlocked ? tr('profile.ordenUnlocked') : tr('profile.ordenLocked')}
                     </div>
                   </div>
                 </div>
@@ -7928,15 +7907,15 @@ export default function AllWin() {
 
       {profileSection === 'redeem' && (
         <div style={S.card}>
-          <div style={S.label}>🎁 Code einlösen</div>
+          <div style={S.label}>{tr('profile.redeemTitle')}</div>
           <input
             style={S.input}
-            placeholder="Code eingeben (z.B. CLEVERPRO)"
+            placeholder={tr('profile.redeemPlaceholder')}
             value={redeemCode}
             onChange={(e) => setRedeemCode(e.target.value)}
           />
           <button style={S.btn()} onClick={applyRedeemCode}>
-            ✨ Einlösen
+            {tr('profile.redeemBtn')}
           </button>
         </div>
       )}
@@ -8020,16 +7999,16 @@ export default function AllWin() {
             <div ref={googleBtnRef} />
             {!googleUiReady && GOOGLE_CLIENT_ID && (
               <button style={S.btn(awBg.mutedBtn)} onClick={reloadGoogleUi}>
-                🔄 Google erneut laden
+                {tr('auth.googleReload')}
               </button>
             )}
             {googleUiFailed && (
               <>
                 <div style={{ fontSize: 11, color: '#ff7b7b' }}>
-                  Google Button konnte nicht geladen werden. Deaktiviere ggf. Adblock/Shield oder nutze den Fallback unten.
+                  {tr('auth.googleBtnFailed')}
                 </div>
                 <button style={S.btn(awBg.mutedBtn)} onClick={startGoogleRedirectLogin}>
-                  🔐 Mit Google im Browser fortfahren
+                  {tr('auth.googleBrowserContinue')}
                 </button>
               </>
             )}
@@ -8038,16 +8017,16 @@ export default function AllWin() {
               onClick={() => void handleAppleLogin()}
               disabled={!APPLE_CLIENT_ID || !appleReady || appleLoading}
             >
-              {appleLoading ? '⏳ Apple startet...' : '🍏 Weiter mit Apple'}
+              {appleLoading ? tr('auth.appleStarting') : tr('auth.appleContinue')}
             </button>
             {!GOOGLE_CLIENT_ID && (
-              <div style={{ fontSize: 11, color: '#7d8590' }}>Google Login aktivieren mit `VITE_GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_ID`.</div>
+              <div style={{ fontSize: 11, color: '#7d8590' }}>{tr('auth.googleSetupHint')}</div>
             )}
             {!APPLE_CLIENT_ID && (
-              <div style={{ fontSize: 11, color: '#7d8590' }}>Apple Login aktivieren mit `VITE_APPLE_CLIENT_ID` + `APPLE_CLIENT_ID`.</div>
+              <div style={{ fontSize: 11, color: '#7d8590' }}>{tr('auth.appleSetupHint')}</div>
             )}
             {APPLE_CLIENT_ID && !appleReady && (
-              <div style={{ fontSize: 11, color: '#7d8590' }}>Apple Script wird geladen... ggf. Seite neu laden.</div>
+              <div style={{ fontSize: 11, color: '#7d8590' }}>{tr('auth.appleScriptLoading')}</div>
             )}
             <button
               type="button"
@@ -8103,13 +8082,14 @@ export default function AllWin() {
 
       {toast && <div style={S.toast(toast.type)}>{toast.msg}</div>}
 
-      <DebtZeroVictoryOverlay open={debtVictoryOpen} onClose={() => setDebtVictoryOpen(false)} />
-      <NotgroschenFullOverlay open={notgroschenVictoryOpen} onClose={() => setNotgroschenVictoryOpen(false)} />
-      <AppGuideTour open={appTourOpen} steps={appTourSteps} onClose={closeAppTour} onTabChange={setTab} />
+      <DebtZeroVictoryOverlay open={debtVictoryOpen} onClose={() => setDebtVictoryOpen(false)} locale={locale} />
+      <NotgroschenFullOverlay open={notgroschenVictoryOpen} onClose={() => setNotgroschenVictoryOpen(false)} locale={locale} />
+      <AppGuideTour open={appTourOpen} steps={appTourSteps} locale={locale} onClose={closeAppTour} onTabChange={setTab} />
       <PortfolioPowerMilestoneOverlay
         open={portfolioMilestoneOpen}
         milestone={portfolioMilestoneKind}
         onClose={dismissPortfolioMilestone}
+        locale={locale}
       />
 
       <div style={S.header}>
@@ -8121,7 +8101,7 @@ export default function AllWin() {
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: 11, color: '#7d8590' }}>
-              {MONTHS[calMonth0]} {reportYear}
+              {monthLabel(calMonth0, locale)} {reportYear}
             </div>
             <div style={{ fontSize: 14, fontWeight: 700, color: saldo >= 0 ? '#2563eb' : '#ff7b7b' }}>
               {saldo >= 0 ? '+' : ''}

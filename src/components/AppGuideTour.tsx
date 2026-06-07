@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import type { AppTourStep } from '../onboarding/appGuideContent';
+import type { AppLocale } from '../i18n/locale';
+import { t as translate } from '../i18n/messages';
 
 type Props = {
   open: boolean;
   steps: AppTourStep[];
+  locale: AppLocale;
   onClose: () => void;
   onTabChange: (tab: string) => void;
 };
@@ -82,7 +85,8 @@ function computeBubblePosition(rect: RectSnap, bubbleH: number, bubbleW: number)
   };
 }
 
-export default function AppGuideTour({ open, steps, onClose, onTabChange }: Props) {
+export default function AppGuideTour({ open, steps, locale, onClose, onTabChange }: Props) {
+  const tr = useCallback((key: string, vars?: Record<string, string>) => translate(key, locale, vars), [locale]);
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<RectSnap | null>(null);
   const [bubblePos, setBubblePos] = useState<BubblePos>({
@@ -298,7 +302,7 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
             />
           )}
           <div style={{ fontSize: 11, color: '#58a6ff', fontWeight: 700, letterSpacing: '0.08em', marginBottom: 6 }}>
-            Schritt {index + 1} von {steps.length}
+            {tr('appTour.step', { current: String(index + 1), total: String(steps.length) })}
           </div>
           <div id="app-tour-title" style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.3, marginBottom: 8 }}>
             {step.title}
@@ -322,7 +326,7 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
                   cursor: 'pointer',
                 }}
               >
-                Zurück
+                {tr('appTour.back')}
               </button>
             )}
             <button
@@ -344,7 +348,7 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
                 cursor: 'pointer',
               }}
             >
-              {isLast ? "Los geht's 🚀" : 'Weiter'}
+              {isLast ? tr('appTour.finish') : tr('appTour.continue')}
             </button>
           </div>
           <button
@@ -362,7 +366,7 @@ export default function AppGuideTour({ open, steps, onClose, onTabChange }: Prop
               textUnderlineOffset: 3,
             }}
           >
-            Tour überspringen
+            {tr('appTour.skip')}
           </button>
         </div>
       </div>

@@ -1,3 +1,6 @@
+import type { AppLocale } from './i18n/locale';
+import { t } from './i18n/messages';
+
 /** Portfolio Power + Cash Depot — gefeierte Meilensteine (aufsteigend). */
 export const PORTFOLIO_POWER_MILESTONE_EURS = [
   8000, 10_000, 20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000,
@@ -22,36 +25,51 @@ export type PortfolioPowerBadge = {
   color: string;
 };
 
+const BADGE_KEYS: { min: number; key: string; fontSize: number; fontWeight: number; color: string }[] = [
+  { min: 1_000_000, key: 'badge1m', fontSize: 13, fontWeight: 700, color: '#c9d1d9' },
+  { min: 500_000, key: 'badge500k', fontSize: 13, fontWeight: 700, color: '#c9d1d9' },
+  { min: 200_000, key: 'badge200k', fontSize: 13, fontWeight: 700, color: '#c9d1d9' },
+  { min: 100_000, key: 'badge100k', fontSize: 13, fontWeight: 700, color: '#c9d1d9' },
+  { min: 50_000, key: 'badge50k', fontSize: 12, fontWeight: 700, color: '#8b949e' },
+  { min: 20_000, key: 'badge20k', fontSize: 12, fontWeight: 700, color: '#8b949e' },
+  { min: 10_000, key: 'badge10k', fontSize: 12, fontWeight: 700, color: '#8b949e' },
+  { min: 8000, key: 'badge8k', fontSize: 12, fontWeight: 600, color: '#8b949e' },
+];
+
 /** Höchsten erreichten Meilenstein als eine Zeile unter dem Betrag — für Home / LevelUp. */
-export function portfolioPowerBadgeFor(power: number): PortfolioPowerBadge | null {
-  if (power >= 1_000_000) {
-    return { emoji: '', text: '1 Mio. € Vermögen', fontSize: 13, fontWeight: 700, color: '#c9d1d9' };
-  }
-  if (power >= 500_000) {
-    return { emoji: '', text: '500.000 € Vermögen', fontSize: 13, fontWeight: 700, color: '#c9d1d9' };
-  }
-  if (power >= 200_000) {
-    return { emoji: '', text: '200.000 € Vermögen', fontSize: 13, fontWeight: 700, color: '#c9d1d9' };
-  }
-  if (power >= 100_000) {
-    return { emoji: '', text: '100.000 € Vermögen', fontSize: 13, fontWeight: 700, color: '#c9d1d9' };
-  }
-  if (power >= 50_000) {
-    return { emoji: '', text: '50.000 € Vermögen', fontSize: 12, fontWeight: 700, color: '#8b949e' };
-  }
-  if (power >= 20_000) {
-    return { emoji: '', text: '20.000 € Vermögen', fontSize: 12, fontWeight: 700, color: '#8b949e' };
-  }
-  if (power >= 10_000) {
-    return { emoji: '', text: '10.000 € Vermögen', fontSize: 12, fontWeight: 700, color: '#8b949e' };
-  }
-  if (power >= 8000) {
-    return { emoji: '', text: '8.000 € Vermögen', fontSize: 12, fontWeight: 600, color: '#8b949e' };
+export function portfolioPowerBadgeFor(power: number, locale: AppLocale = 'de'): PortfolioPowerBadge | null {
+  for (const row of BADGE_KEYS) {
+    if (power >= row.min) {
+      return {
+        emoji: '',
+        text: t(`overlay.${row.key}`, locale),
+        fontSize: row.fontSize,
+        fontWeight: row.fontWeight,
+        color: row.color,
+      };
+    }
   }
   return null;
 }
 
-export function milestoneCelebrationMeta(m: PortfolioPowerMilestone): {
+const MILESTONE_META: Record<
+  PortfolioPowerMilestone,
+  { headlineKey: string; subKey: string; icon: string; accent: string; confetti: number }
+> = {
+  8000: { headlineKey: 'milestone8000Headline', subKey: 'milestone8000Sub', icon: '🏆', accent: '#a855f7', confetti: 14 },
+  10_000: { headlineKey: 'milestone10kHeadline', subKey: 'milestone10kSub', icon: '✨', accent: '#f8d03a', confetti: 16 },
+  20_000: { headlineKey: 'milestone20kHeadline', subKey: 'milestone20kSub', icon: '📈', accent: '#00d4aa', confetti: 16 },
+  50_000: { headlineKey: 'milestone50kHeadline', subKey: 'milestone50kSub', icon: '🔷', accent: '#a855f7', confetti: 18 },
+  100_000: { headlineKey: 'milestone100kHeadline', subKey: 'milestone100kSub', icon: '⚡', accent: '#58a6ff', confetti: 20 },
+  200_000: { headlineKey: 'milestone200kHeadline', subKey: 'milestone200kSub', icon: '💠', accent: '#7dd3fc', confetti: 20 },
+  500_000: { headlineKey: 'milestone500kHeadline', subKey: 'milestone500kSub', icon: '🚀', accent: '#58a6ff', confetti: 22 },
+  1_000_000: { headlineKey: 'milestone1mHeadline', subKey: 'milestone1mSub', icon: '🌟', accent: '#f8d03a', confetti: 26 },
+};
+
+export function milestoneCelebrationMeta(
+  m: PortfolioPowerMilestone,
+  locale: AppLocale = 'de',
+): {
   headline: string;
   sub: string;
   btn: string;
@@ -59,82 +77,13 @@ export function milestoneCelebrationMeta(m: PortfolioPowerMilestone): {
   accent: string;
   confetti: number;
 } {
-  switch (m) {
-    case 8000:
-      return {
-        headline: '8.000 € Vermögen',
-        sub: 'Portfolio Power und Cash Depot zusammen über 8.000 € — solide Basis für den nächsten Schritt.',
-        btn: 'Weiter',
-        icon: '🏆',
-        accent: '#a855f7',
-        confetti: 14,
-      };
-    case 10_000:
-      return {
-        headline: '10.000 € Vermögen',
-        sub: 'Die fünfstellige Marke ist erreicht. Kontinuität zahlt sich aus.',
-        btn: 'Weiter',
-        icon: '✨',
-        accent: '#f8d03a',
-        confetti: 16,
-      };
-    case 20_000:
-      return {
-        headline: '20.000 € Vermögen',
-        sub: 'Dein Vermögen wächst planbar — weiter am Plan festhalten.',
-        btn: 'Weiter',
-        icon: '📈',
-        accent: '#00d4aa',
-        confetti: 16,
-      };
-    case 50_000:
-      return {
-        headline: '50.000 € Vermögen',
-        sub: 'Ein beachtliches Polster. Disziplin und Zeit wirken hier sichtbar.',
-        btn: 'Weiter',
-        icon: '🔷',
-        accent: '#a855f7',
-        confetti: 18,
-      };
-    case 100_000:
-      return {
-        headline: '100.000 € Vermögen',
-        sub: 'Sechsstellig — ein Meilenstein, den viele erst nach Jahren erreichen.',
-        btn: 'Weiter',
-        icon: '⚡',
-        accent: '#58a6ff',
-        confetti: 20,
-      };
-    case 200_000:
-      return {
-        headline: '200.000 € Vermögen',
-        sub: 'Portfolio und Cash Depot zusammen über 200.000 €.',
-        btn: 'Weiter',
-        icon: '💠',
-        accent: '#7dd3fc',
-        confetti: 20,
-      };
-    case 500_000:
-      return {
-        headline: '500.000 € Vermögen',
-        sub: 'Halbe Million im Gesamtvermögen — stark aufgestellt.',
-        btn: 'Weiter',
-        icon: '🚀',
-        accent: '#58a6ff',
-        confetti: 22,
-      };
-    case 1_000_000:
-      return {
-        headline: '1 Mio. € Vermögen',
-        sub: 'Eine Million Portfolio Power plus Cash Depot — ein seltener und bedeutsamer Stand.',
-        btn: 'Weiter',
-        icon: '🌟',
-        accent: '#f8d03a',
-        confetti: 26,
-      };
-    default: {
-      const _x: never = m;
-      return _x;
-    }
-  }
+  const meta = MILESTONE_META[m];
+  return {
+    headline: t(`overlay.${meta.headlineKey}`, locale),
+    sub: t(`overlay.${meta.subKey}`, locale),
+    btn: t('overlay.milestoneContinue', locale),
+    icon: meta.icon,
+    accent: meta.accent,
+    confetti: meta.confetti,
+  };
 }

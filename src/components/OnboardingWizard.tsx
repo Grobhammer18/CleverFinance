@@ -97,16 +97,6 @@ const W = {
   },
 };
 
-function pronoun(who: FinanceWho) {
-  if (who === 'partner') return { subj: 'ihr', bes: 'euer', habt: 'habt', verd: 'verdient ihr', euch: 'euch' };
-  return { subj: 'du', bes: 'dein', habt: 'hast', verd: 'verdienst du', euch: 'dir' };
-}
-
-const TOPICS = ['Aktien', "ETF's / Fonds", 'Immobilien', 'P2P', 'Lebensversicherung', 'Sonstiges'];
-const CLASSES_INTENT = ["ETF's", 'Aktien', 'Krypto', 'Anleihen', 'Lebensversicherung', 'Immobilien', 'Sonstiges'];
-const CLASSES_HELD = ['Aktien', "ETF's", 'Krypto', 'Anleihen', 'Immobilien', 'P2P', 'Sonstiges'];
-const WHY = ['Einfache Übersicht zu haben', 'Die Tools nutzen', 'Alles auf einem Blick haben', 'Mit den Finanzen mehr beschäftigen', 'Sonstiges'];
-
 const WATCHLIST_MAP_OPTS = ['BTC', 'ETH', 'SPY', 'AAPL', 'MSCI'] as const;
 
 /** Während der Eingabe: Ziffern + ein Komma (z. B. „3200,50“). */
@@ -193,8 +183,8 @@ export default function OnboardingWizard({ onComplete }: Props) {
   const [why, setWhy] = useState<string[]>([]);
   const [whyOther, setWhyOther] = useState('');
 
-  const p = useMemo(() => pronoun(financeWho), [financeWho]);
   const netIncome = useMemo(() => parseNum(netIncomeStr), [netIncomeStr]);
+  const curSym = useMemo(() => moneyCurrencySymbol(baseCurrency), [baseCurrency]);
   const branch = useMemo(() => {
     const emHas = emergencyHas === true;
     return computeBranch({ hasDebt: hasDebt === true, debtKinds, emergencyHas: emHas });
@@ -207,7 +197,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
   const initDebtRows = (n: number) => {
     const kind0: 'consumer' | 'house' = debtKinds.consumer ? 'consumer' : 'house';
     const rows: DebtRowForm[] = Array.from({ length: n }, (_, i) => ({
-      name: i === 0 ? 'Dispokredit' : '',
+      name: i === 0 ? ob.defaultDebtName : '',
       totalStr: '',
       monthlyStr: '',
       kind: debtKinds.consumer && !debtKinds.house ? 'consumer' : !debtKinds.consumer && debtKinds.house ? 'house' : i % 2 === 0 ? 'consumer' : 'house',
@@ -226,12 +216,12 @@ export default function OnboardingWizard({ onComplete }: Props) {
     if (investSkipped) return null;
     return {
       experienced: investExperienced ?? false,
-      topics: topics.includes('Sonstiges') && topicOther ? [...topics.filter((t) => t !== 'Sonstiges'), topicOther] : topics,
+      topics: topics.includes(ob.common.other) && topicOther ? [...topics.filter((t) => t !== ob.common.other), topicOther] : topics,
       approxInvested: parseNum(approxInvStr) || 0,
       monthlyWant: parseNum(monthlyInvStr) || 0,
       risk: risk || 'mid',
       desiredClasses: classesIntent,
-      heldClasses: classesHeld.includes('Sonstiges') && heldOther ? [...classesHeld.filter((t) => t !== 'Sonstiges'), heldOther] : classesHeld,
+      heldClasses: classesHeld.includes(ob.common.other) && heldOther ? [...classesHeld.filter((t) => t !== ob.common.other), heldOther] : classesHeld,
       sonstigesTopic: topicOther,
       stocks: stocks
         .filter((s) => s.name.trim())
@@ -554,30 +544,30 @@ export default function OnboardingWizard({ onComplete }: Props) {
 
         {step === 'debts_types' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Was für Schulden? 📒</div>
-            <div style={W.mood}>Einfach antippen — mehrfach möglich.</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.debtsTypes.title}</div>
+            <div style={W.mood}>{ob.debtsTypes.mood}</div>
             <button
               type="button"
               style={W.chip(debtKinds.consumer)}
               onClick={() => setDebtKinds((k) => ({ ...k, consumer: !k.consumer }))}
             >
-              <span>Dispo / Konsum</span>
+              <span>{ob.debtsTypes.consumer}</span>
               <span>{debtKinds.consumer ? '✅' : '⬜'}</span>
             </button>
             <button type="button" style={W.chip(debtKinds.house)} onClick={() => setDebtKinds((k) => ({ ...k, house: !k.house }))}>
-              <span>Hauskredit / Immobilie</span>
+              <span>{ob.debtsTypes.house}</span>
               <span>{debtKinds.house ? '✅' : '⬜'}</span>
             </button>
             <button style={W.btn()} onClick={nextFromDebtTypes} disabled={!debtKinds.consumer && !debtKinds.house}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'debts_count' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Wie viele Kredite / Schulden? 🔢</div>
-            <div style={W.mood}>Schätzung reicht — du kannst alles später feinjustieren.</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.debtsCount.title}</div>
+            <div style={W.mood}>{ob.debtsCount.mood}</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {[1, 2, 3].map((n) => (
                 <button key={n} type="button" style={{ ...W.chip(debtCount === n), flex: 1, minWidth: 72, justifyContent: 'center' }} onClick={() => setDebtCount(n)}>
@@ -588,23 +578,23 @@ export default function OnboardingWizard({ onComplete }: Props) {
             <input
               style={{ ...W.input, marginTop: 10 }}
               inputMode="numeric"
-              placeholder="oder andere Zahl (max. 12)"
+              placeholder={ob.debtsCount.placeholder}
               value={String(debtCount)}
               onChange={(e) => setDebtCount(Math.min(12, Math.max(1, parseInt(e.target.value, 10) || 1)))}
             />
             <button style={W.btn()} onClick={nextFromDebtCount}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'debts_entries' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Kreditdetails ✍️</div>
-            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 12 }}>Landet direkt in deinem Schuldentracker — ein kleiner Schritt, große Klarheit.</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.debtsEntries.title}</div>
+            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 12 }}>{ob.debtsEntries.hint}</div>
             {debtRows.map((row, idx) => (
               <div key={idx} style={{ border: `1px solid ${P.line}`, borderRadius: 12, padding: 12, marginBottom: 10 }}>
-                <div style={{ fontWeight: 700, marginBottom: 8 }}>{idx + 1}. Kredit</div>
+                <div style={{ fontWeight: 700, marginBottom: 8 }}>{ob.debtsEntries.loanN(idx + 1)}</div>
                 <select
                   style={{ ...W.input, marginBottom: 8 }}
                   value={row.kind}
@@ -613,18 +603,18 @@ export default function OnboardingWizard({ onComplete }: Props) {
                     setDebtRows((prev) => prev.map((r, i) => (i === idx ? { ...r, kind: v } : r)));
                   }}
                 >
-                  <option value="consumer">Dispo / Konsum</option>
-                  <option value="house">Hauskredit</option>
+                  <option value="consumer">{ob.debtsEntries.consumer}</option>
+                  <option value="house">{ob.debtsEntries.house}</option>
                 </select>
                 <input
                   style={{ ...W.input, marginBottom: 8 }}
-                  placeholder="Name (z. B. Dispokredit)"
+                  placeholder={ob.debtsEntries.namePlaceholder}
                   value={row.name}
                   onChange={(e) => setDebtRows((prev) => prev.map((r, i) => (i === idx ? { ...r, name: e.target.value } : r)))}
                 />
                 <input
                   style={{ ...W.input, marginBottom: 8 }}
-                  placeholder="Höhe Gesamt (€)"
+                  placeholder={ob.debtsEntries.totalPlaceholder(curSym)}
                   inputMode="decimal"
                   value={row.totalStr}
                   onChange={(e) =>
@@ -635,7 +625,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                 />
                 <input
                   style={W.input}
-                  placeholder="Rate monatlich (€)"
+                  placeholder={ob.debtsEntries.monthlyPlaceholder(curSym)}
                   inputMode="decimal"
                   value={row.monthlyStr}
                   onChange={(e) =>
@@ -647,7 +637,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
               </div>
             ))}
             <button style={W.btn()} onClick={nextFromDebtEntries}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
@@ -655,39 +645,39 @@ export default function OnboardingWizard({ onComplete }: Props) {
         {step === 'emergency_yn' && (
           <>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
-              {financeWho === 'partner' ? 'Habt ihr ein Notgroschen?' : 'Hast du ein Notgroschen?'} 🛟
+              {financeWho === 'partner' ? ob.emergencyYn.titlePartner : ob.emergencyYn.titleAlone}
             </div>
-            <div style={W.mood}>Polster = Ruhe im Kopf — wir rechnen dir ein sinnvolles Ziel aus.</div>
+            <div style={W.mood}>{ob.emergencyYn.mood}</div>
             <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 12 }}>
-              Empfehlung: 2–3 Monatsgehälter als Polster. Zielvorschlag: ca. {ob.fmtMoney(notgroschenTargetFromIncome(netIncome), baseCurrency, locale)} (2,5× Netto).
+              {ob.emergencyYn.targetHint(ob.fmtMoney(notgroschenTargetFromIncome(netIncome), baseCurrency, locale))}
             </div>
             <button type="button" style={W.chip(emergencyHas === true)} onClick={() => setEmergencyHas(true)}>
-              <span>Ja</span>
+              <span>{ob.common.yes}</span>
               <span>{emergencyHas === true ? '✅' : '›'}</span>
             </button>
             <button type="button" style={W.chip(emergencyHas === false)} onClick={() => setEmergencyHas(false)}>
-              <span>Nein</span>
+              <span>{ob.common.no}</span>
               <span>{emergencyHas === false ? '✅' : '›'}</span>
             </button>
             <button style={W.btn()} onClick={nextFromEmergencyYn} disabled={emergencyHas === null}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'emergency_balance' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Wie hoch ist der aktuelle Stand? 💰</div>
-            <div style={W.mood}>Nice — du hast schon was liegen! 🙌</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.emergencyBalance.title}</div>
+            <div style={W.mood}>{ob.emergencyBalance.mood}</div>
             <input
               style={W.input}
               inputMode="decimal"
-              placeholder="€"
+              placeholder={ob.emergencyBalance.placeholder(curSym)}
               value={emergencyBalanceStr}
               onChange={(e) => setEmergencyBalanceStr(normalizeDecimalInput(e.target.value))}
             />
             <button style={W.btn()} onClick={afterEmergencyBranch}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
@@ -695,18 +685,18 @@ export default function OnboardingWizard({ onComplete }: Props) {
         {step === 'emergency_monthly' && (
           <>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
-              Wie viel möchtet {p.subj === 'ihr' ? 'ihr' : 'du'} monatlich ins Notgroschen legen? 📅
+              {financeWho === 'partner' ? ob.emergencyMonthly.titlePartner : ob.emergencyMonthly.titleAlone}
             </div>
-            <div style={W.mood}>Jeder Euro zählt — auch kleine Beträge summieren sich.</div>
+            <div style={W.mood}>{ob.emergencyMonthly.mood}</div>
             <input
               style={W.input}
               inputMode="decimal"
-              placeholder="€ / Monat"
+              placeholder={ob.emergencyMonthly.placeholder(curSym)}
               value={emergencyMonthlyStr}
               onChange={(e) => setEmergencyMonthlyStr(normalizeDecimalInput(e.target.value))}
             />
             <button style={W.btn()} onClick={afterEmergencyBranch}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
@@ -714,106 +704,98 @@ export default function OnboardingWizard({ onComplete }: Props) {
         {step === 'splash_focus' && (
           <>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>
-              {splashKind === 'debt' ? 'Fokus: Schulden zuerst 🎯' : 'Fokus: Notgroschen aufbauen 🌱'}
+              {splashKind === 'debt' ? ob.splashFocus.debtTitle : ob.splashFocus.emergencyTitle}
             </div>
-            <div style={W.mood}>Kurz erklärt — danach geht&apos;s entspannt weiter.</div>
+            <div style={W.mood}>{ob.splashFocus.mood}</div>
             <div style={{ fontSize: 14, color: '#c9d1d9', lineHeight: 1.55 }}>
-              {splashKind === 'debt' ? (
-                <>
-                  Investment-Themen überspringen wir vorerst. Unter „LevelUp“ siehst du nichts, bis alle Schulden beglichen sind — damit du dich voll auf die Tilgung konzentrieren kannst.
-                </>
-              ) : (
-                <>
-                  Ohne Notgroschen überspringen wir die Investment-Fragen im Onboarding — <strong>LevelUp</strong> (Portfolio, Orders, Live-Kurse) bleibt für dich trotzdem nutzbar. Bitte baut parallel euren Notgroschen unter Home auf (⋮ → „Stand bearbeiten“, Ziel ca. {ob.fmtMoney(notgroschenTargetFromIncome(netIncome), baseCurrency, locale)}).
-                </>
-              )}
+              {splashKind === 'debt' ? ob.splashFocus.debtBody : ob.splashFocus.emergencyBody(ob.fmtMoney(notgroschenTargetFromIncome(netIncome), baseCurrency, locale))}
             </div>
             <button style={W.btn()} onClick={nextFromSplash}>
-              Alles klar — weiter 😊
+              {ob.splashFocus.btn}
             </button>
           </>
         )}
 
         {step === 'invest_experienced' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Schon mal in Investieren reingeschaut? 📈</div>
-            <div style={W.mood}>Kein Urteil — nur passende nächste Schritte.</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.investExperienced.title}</div>
+            <div style={W.mood}>{ob.investExperienced.mood}</div>
             <button type="button" style={W.chip(investExperienced === true)} onClick={() => setInvestExperienced(true)}>
-              <span>Ja</span>
+              <span>{ob.common.yes}</span>
               <span>{investExperienced === true ? '✅' : '›'}</span>
             </button>
             <button type="button" style={W.chip(investExperienced === false)} onClick={() => setInvestExperienced(false)}>
-              <span>Nein</span>
+              <span>{ob.common.no}</span>
               <span>{investExperienced === false ? '✅' : '›'}</span>
             </button>
             <button style={W.btn()} onClick={nextFromInvestExperienced} disabled={investExperienced === null}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'invest_topics' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Womit beschäftigst du dich? 🧭</div>
-            <div style={W.mood}>Mehrfachwahl — nimm alles, was dich neugierig macht.</div>
-            {TOPICS.map((t) => (
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.investTopics.title}</div>
+            <div style={W.mood}>{ob.investTopics.mood}</div>
+            {ob.topics.map((t) => (
               <button key={t} type="button" style={W.chip(topics.includes(t))} onClick={() => toggle(topics, t, setTopics)}>
                 <span>{t}</span>
                 <span>{topics.includes(t) ? '✓' : ''}</span>
               </button>
             ))}
-            {topics.includes('Sonstiges') && (
-              <input style={{ ...W.input, marginTop: 8 }} placeholder="Sonstiges (kurz)" value={topicOther} onChange={(e) => setTopicOther(e.target.value)} />
+            {topics.includes(ob.common.other) && (
+              <input style={{ ...W.input, marginTop: 8 }} placeholder={ob.investTopics.otherPlaceholder} value={topicOther} onChange={(e) => setTopicOther(e.target.value)} />
             )}
             <button style={W.btn()} onClick={nextFromTopics} disabled={!topics.length}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'invest_amount' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Wie viel hast du ca. investiert? 🪙</div>
-            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 8 }}>Noch gar nicht? Einfach 0 — auch das ist ein guter Start 🙂</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.investAmount.title}</div>
+            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 8 }}>{ob.investAmount.hint}</div>
             <input
               style={W.input}
               inputMode="decimal"
-              placeholder="€"
+              placeholder={ob.investAmount.placeholder(curSym)}
               value={approxInvStr}
               onChange={(e) => setApproxInvStr(normalizeDecimalInput(e.target.value))}
             />
             <button style={W.btn()} onClick={nextFromAmount}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'invest_monthly' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Wie viel möchtest du monatlich investieren? 🐖</div>
-            <div style={W.mood}>Sparstrumpf-Modus: auch 25 €/Monat sind ein Ritual mit Wirkung.</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.investMonthly.title}</div>
+            <div style={W.mood}>{ob.investMonthly.mood}</div>
             <input
               style={W.input}
               inputMode="decimal"
-              placeholder="€ / Monat"
+              placeholder={ob.investMonthly.placeholder(curSym)}
               value={monthlyInvStr}
               onChange={(e) => setMonthlyInvStr(normalizeDecimalInput(e.target.value))}
             />
             <button style={W.btn()} onClick={nextFromMonthly}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'invest_risk' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Risikoprofil — wie wild darf&apos;s sein? 🎢</div>
-            <div style={W.mood}>Du kannst das später jederzeit anpassen.</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.investRisk.title}</div>
+            <div style={W.mood}>{ob.investRisk.mood}</div>
             {(
               [
-                ['low', 'Wenig Risiko (konservativ)'],
-                ['mid', 'Mittel (ausgewogen)'],
-                ['high', 'Viel Risiko (aggressiv)'],
+                ['low', ob.investRisk.low],
+                ['mid', ob.investRisk.mid],
+                ['high', ob.investRisk.high],
               ] as const
             ).map(([k, lab]) => (
               <button key={k} type="button" style={W.chip(risk === k)} onClick={() => setRisk(k)}>
@@ -822,68 +804,68 @@ export default function OnboardingWizard({ onComplete }: Props) {
               </button>
             ))}
             <button style={W.btn()} onClick={nextFromRisk} disabled={!risk}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'invest_classes_intent' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>In was möchtest du investieren? 🧩</div>
-            <div style={W.mood}>Träume groß — wir halten die Übersicht klein und übersichtlich.</div>
-            {CLASSES_INTENT.map((t) => (
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.investClassesIntent.title}</div>
+            <div style={W.mood}>{ob.investClassesIntent.mood}</div>
+            {ob.classesIntent.map((t) => (
               <button key={t} type="button" style={W.chip(classesIntent.includes(t))} onClick={() => toggle(classesIntent, t, setClassesIntent)}>
                 <span>{t}</span>
                 <span>{classesIntent.includes(t) ? '✓' : ''}</span>
               </button>
             ))}
             <button style={W.btn()} onClick={nextFromClassesIntent} disabled={!classesIntent.length}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'invest_classes_held' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>In was bist du investiert? 🗂️</div>
-            <div style={W.mood}>Alles, was schon in deinem Depot oder Kopf herumspukt.</div>
-            {CLASSES_HELD.map((t) => (
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.investClassesHeld.title}</div>
+            <div style={W.mood}>{ob.investClassesHeld.mood}</div>
+            {ob.classesHeld.map((t) => (
               <button key={t} type="button" style={W.chip(classesHeld.includes(t))} onClick={() => toggle(classesHeld, t, setClassesHeld)}>
                 <span>{t}</span>
                 <span>{classesHeld.includes(t) ? '✓' : ''}</span>
               </button>
             ))}
-            {classesHeld.includes('Sonstiges') && (
-              <input style={{ ...W.input, marginTop: 8 }} placeholder="Sonstiges" value={heldOther} onChange={(e) => setHeldOther(e.target.value)} />
+            {classesHeld.includes(ob.common.other) && (
+              <input style={{ ...W.input, marginTop: 8 }} placeholder={ob.investClassesHeld.otherPlaceholder} value={heldOther} onChange={(e) => setHeldOther(e.target.value)} />
             )}
             <button style={W.btn()} onClick={nextFromClassesHeld} disabled={!classesHeld.length}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'invest_details' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Details zu deinen Positionen 🔍</div>
-            <div style={W.mood}>Optional — aber hilft für Watchlist und Übersicht.</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.investDetails.title}</div>
+            <div style={W.mood}>{ob.investDetails.mood}</div>
             <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 12, lineHeight: 1.45 }}>
-              Optional: jede Zeile einem Watchlist-Symbol zuordnen (Kaufpreis × Stückzahl = EUR in der App). Leer = automatische Verteilung.
+              {ob.investDetails.hint}
             </div>
-            {classesHeld.some((c) => ['Aktien', "ETF's", 'Anleihen'].includes(c)) && (
+            {classesHeld.some((c) => ob.stockHeldClasses.includes(c)) && (
               <div style={{ marginBottom: 14 }}>
-                <div style={W.label}>Aktien / ETF / Anleihen</div>
+                <div style={W.label}>{ob.investDetails.stockLabel}</div>
                 {stocks.map((s, i) => (
                   <div key={i} style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
                     <input
                       style={W.input}
-                      placeholder="Name (z. B. Apple, MSCI World)"
+                      placeholder={ob.investDetails.nameStockPlaceholder}
                       value={s.name}
                       onChange={(e) => setStocks((prev) => prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
                     />
                     <input
                       style={W.input}
                       inputMode="decimal"
-                      placeholder="Kaufpreis €"
+                      placeholder={ob.investDetails.buyPricePlaceholder(curSym)}
                       value={s.buyPriceStr}
                       onChange={(e) =>
                         setStocks((prev) =>
@@ -894,7 +876,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                     <input
                       style={W.input}
                       inputMode="decimal"
-                      placeholder="Stückzahl"
+                      placeholder={ob.investDetails.qtyPlaceholder}
                       value={s.qtyStr}
                       onChange={(e) =>
                         setStocks((prev) =>
@@ -907,7 +889,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                       value={s.mapSym || ''}
                       onChange={(e) => setStocks((prev) => prev.map((x, j) => (j === i ? { ...x, mapSym: e.target.value } : x)))}
                     >
-                      <option value="">Watchlist: automatisch</option>
+                      <option value="">{ob.investDetails.watchlistAuto}</option>
                       {WATCHLIST_MAP_OPTS.map((sym) => (
                         <option key={sym} value={sym}>
                           → {sym}
@@ -921,25 +903,25 @@ export default function OnboardingWizard({ onComplete }: Props) {
                   style={{ ...W.btn(P.mutedBtn), marginTop: 0 }}
                   onClick={() => setStocks((prev) => [...prev, { name: '', buyPriceStr: '', qtyStr: '', mapSym: '' }])}
                 >
-                  + Position
+                  {ob.investDetails.addPosition}
                 </button>
               </div>
             )}
-            {classesHeld.includes('Krypto') && (
+            {classesHeld.includes(ob.cryptoHeldClass) && (
               <div style={{ marginBottom: 14 }}>
-                <div style={W.label}>Krypto</div>
+                <div style={W.label}>{ob.investDetails.cryptoLabel}</div>
                 {cryptos.map((s, i) => (
                   <div key={i} style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
                     <input
                       style={W.input}
-                      placeholder="Name / Kürzel"
+                      placeholder={ob.investDetails.cryptoNamePlaceholder}
                       value={s.name}
                       onChange={(e) => setCryptos((prev) => prev.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
                     />
                     <input
                       style={W.input}
                       inputMode="decimal"
-                      placeholder="Kaufpreis €"
+                      placeholder={ob.investDetails.buyPricePlaceholder(curSym)}
                       value={s.buyPriceStr}
                       onChange={(e) =>
                         setCryptos((prev) =>
@@ -950,7 +932,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                     <input
                       style={W.input}
                       inputMode="decimal"
-                      placeholder="Stück"
+                      placeholder={ob.investDetails.qtyCryptoPlaceholder}
                       value={s.qtyStr}
                       onChange={(e) =>
                         setCryptos((prev) =>
@@ -963,7 +945,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                       value={s.mapSym || ''}
                       onChange={(e) => setCryptos((prev) => prev.map((x, j) => (j === i ? { ...x, mapSym: e.target.value } : x)))}
                     >
-                      <option value="">Watchlist: automatisch (55 % BTC / 45 % ETH)</option>
+                      <option value="">{ob.investDetails.watchlistCryptoAuto}</option>
                       {WATCHLIST_MAP_OPTS.map((sym) => (
                         <option key={sym} value={sym}>
                           → {sym}
@@ -977,21 +959,21 @@ export default function OnboardingWizard({ onComplete }: Props) {
                   style={{ ...W.btn(P.mutedBtn), marginTop: 0 }}
                   onClick={() => setCryptos((prev) => [...prev, { name: '', buyPriceStr: '', qtyStr: '', mapSym: '' }])}
                 >
-                  + Krypto
+                  {ob.investDetails.addCrypto}
                 </button>
               </div>
             )}
-            {classesHeld.includes('Immobilien') && (
+            {classesHeld.includes(ob.propertyHeldClass) && (
               <div style={{ marginBottom: 14 }}>
-                <div style={W.label}>Immobilien</div>
+                <div style={W.label}>{ob.investDetails.propertyLabel}</div>
                 {immos.map((m, i) => (
                   <div key={i} style={{ border: `1px solid ${P.line}`, borderRadius: 10, padding: 10, marginBottom: 8, display: 'grid', gap: 6 }}>
-                    <input style={W.input} placeholder="Ort / PLZ" value={m.ortPlz} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, ortPlz: e.target.value } : x)))} />
-                    <input style={W.input} placeholder="Straße" value={m.strasse} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, strasse: e.target.value } : x)))} />
+                    <input style={W.input} placeholder={ob.investDetails.propertyLocationPlaceholder} value={m.ortPlz} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, ortPlz: e.target.value } : x)))} />
+                    <input style={W.input} placeholder={ob.investDetails.propertyStreetPlaceholder} value={m.strasse} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, strasse: e.target.value } : x)))} />
                     <input
                       style={W.input}
                       inputMode="decimal"
-                      placeholder="Kaufpreis €"
+                      placeholder={ob.investDetails.buyPricePlaceholder(curSym)}
                       value={m.kaufpreisStr}
                       onChange={(e) =>
                         setImmos((prev) =>
@@ -1002,7 +984,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                     <input
                       style={W.input}
                       inputMode="decimal"
-                      placeholder="Wohnfläche m²"
+                      placeholder={ob.investDetails.propertyAreaPlaceholder}
                       value={m.wohnflaecheStr}
                       onChange={(e) =>
                         setImmos((prev) =>
@@ -1013,7 +995,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                     <input
                       style={W.input}
                       inputMode="decimal"
-                      placeholder="Kaltmiete €"
+                      placeholder={ob.investDetails.propertyRentPlaceholder(curSym)}
                       value={m.kaltmieteStr}
                       onChange={(e) =>
                         setImmos((prev) =>
@@ -1024,7 +1006,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                     <input
                       style={W.input}
                       inputMode="decimal"
-                      placeholder="Nebenkosten €"
+                      placeholder={ob.investDetails.propertyUtilitiesPlaceholder(curSym)}
                       value={m.nebenkostenStr}
                       onChange={(e) =>
                         setImmos((prev) =>
@@ -1032,17 +1014,17 @@ export default function OnboardingWizard({ onComplete }: Props) {
                         )
                       }
                     />
-                    <input style={W.input} placeholder="Letzte Mieterhöhung (Datum)" value={m.letzteErhebung} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, letzteErhebung: e.target.value } : x)))} />
-                    <input style={W.input} placeholder="Erhöhungszyklus (z. B. 3 Jahre)" value={m.zyklusJahre} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, zyklusJahre: e.target.value } : x)))} />
+                    <input style={W.input} placeholder={ob.investDetails.propertyRaiseDatePlaceholder} value={m.letzteErhebung} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, letzteErhebung: e.target.value } : x)))} />
+                    <input style={W.input} placeholder={ob.investDetails.propertyRaiseCyclePlaceholder} value={m.zyklusJahre} onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, zyklusJahre: e.target.value } : x)))} />
                     <select
                       style={W.input}
                       value={m.mapSym || ''}
                       onChange={(e) => setImmos((prev) => prev.map((x, j) => (j === i ? { ...x, mapSym: e.target.value } : x)))}
                     >
-                      <option value="">Watchlist-Anteil: automatisch (6 % Kaufpreis → MSCI/SPY)</option>
+                      <option value="">{ob.investDetails.watchlistPropertyAuto}</option>
                       {WATCHLIST_MAP_OPTS.map((sym) => (
                         <option key={sym} value={sym}>
-                          Anteil auf {sym}
+                          {ob.investDetails.watchlistPropertyOn(sym)}
                         </option>
                       ))}
                     </select>
@@ -1068,24 +1050,24 @@ export default function OnboardingWizard({ onComplete }: Props) {
                     ])
                   }
                 >
-                  + Immobilie
+                  {ob.investDetails.addProperty}
                 </button>
               </div>
             )}
-            {classesHeld.includes('P2P') && (
+            {classesHeld.includes(ob.p2pHeldClass) && (
               <div style={{ marginBottom: 14 }}>
-                <div style={W.label}>P2P</div>
+                <div style={W.label}>{ob.investDetails.p2pLabel}</div>
                 <input
                   style={{ ...W.input, marginBottom: 8 }}
                   inputMode="decimal"
-                  placeholder="Gesamtinvest €"
+                  placeholder={ob.investDetails.p2pTotalPlaceholder(curSym)}
                   value={p2p.gesamtStr}
                   onChange={(e) => setP2p((x) => ({ ...x, gesamtStr: normalizeDecimalInput(e.target.value) }))}
                 />
                 <input
                   style={W.input}
                   inputMode="decimal"
-                  placeholder="Profit %"
+                  placeholder={ob.investDetails.p2pProfitPlaceholder}
                   value={p2p.profitPctStr}
                   onChange={(e) => setP2p((x) => ({ ...x, profitPctStr: normalizeDecimalInput(e.target.value) }))}
                 />
@@ -1094,25 +1076,25 @@ export default function OnboardingWizard({ onComplete }: Props) {
                   value={p2p.mapSym || ''}
                   onChange={(e) => setP2p((x) => ({ ...x, mapSym: e.target.value }))}
                 >
-                  <option value="">Watchlist: automatisch (Mix)</option>
+                  <option value="">{ob.investDetails.watchlistP2pAuto}</option>
                   {WATCHLIST_MAP_OPTS.map((sym) => (
                     <option key={sym} value={sym}>
-                      Gesamtinvest auf {sym}
+                      {ob.investDetails.watchlistP2pOn(sym)}
                     </option>
                   ))}
                 </select>
               </div>
             )}
             <button style={W.btn()} onClick={nextFromDetails}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}
 
         {step === 'why_here' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Warum bist du hier? 💬</div>
-            <div style={W.mood}>Damit wir die App für dich noch passender machen.</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.whyHereStep.title}</div>
+            <div style={W.mood}>{ob.whyHereStep.mood}</div>
             {ob.whyHere.map((t) => (
               <button key={t} type="button" style={W.chip(why.includes(t))} onClick={() => toggle(why, t, setWhy)}>
                 <span>{t}</span>
@@ -1123,7 +1105,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
               <input style={{ ...W.input, marginTop: 8 }} placeholder={ob.common.other} value={whyOther} onChange={(e) => setWhyOther(e.target.value)} />
             )}
             <button style={W.btn()} onClick={nextFromWhy} disabled={!why.length}>
-              Weiter
+              {ob.common.continue}
             </button>
           </>
         )}

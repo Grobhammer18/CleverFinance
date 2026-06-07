@@ -13,6 +13,8 @@ import {
   YAxis,
 } from 'recharts';
 import { allwinPalette as aw } from '../../theme/allwinPalette';
+import type { AppLocale } from '../../i18n/locale';
+import { monthLabel, t as translate } from '../../i18n/messages';
 import DebtPaydownCurve from './DebtPaydownCurve';
 import {
   resolveHomeChartSeries,
@@ -25,13 +27,14 @@ import {
   type DailyVermogenSnapshot,
 } from './homeChartData';
 
-const EUR_FMT = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 
 const PIE_PALETTE = ['#00d4aa', '#2563eb', '#a855f7', '#f8d03a', '#ff7b7b', '#5b93ff', '#f0883e', '#7c3aed'];
 
-const MONTH_SHORT_DE = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-
 type MoneyMonthBucket = { einnahmen: number; ausgaben: number };
+
+function cs(locale: AppLocale, key: string, vars?: Record<string, string>) {
+  return translate(`chartsSection.${key}`, locale, vars);
+}
 
 const cardStyle: CSSProperties = {
   padding: '16px',
@@ -43,6 +46,7 @@ const cardStyle: CSSProperties = {
 
 /** Jahres‑Balken aus Money — zuvor auf Home, nun Tab Übersicht. */
 function YearMoneyOverviewCard(props: {
+  locale: AppLocale;
   reportYear: number;
   buckets: MoneyMonthBucket[];
   levelUpLocked: boolean;
@@ -60,14 +64,14 @@ function YearMoneyOverviewCard(props: {
   return (
     <div style={wrapStyle}>
       <div>
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#e6edf3', marginBottom: 8 }}>🗓️ Jahr {props.reportYear}</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#e6edf3', marginBottom: 8 }}>{cs(props.locale, 'yearTitle', { year: String(props.reportYear) })}</div>
         {!props.levelUpLocked ? (
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 10, lineHeight: 1.45 }}>
-            Jahresübersicht aus Money (Einnahmen − Ausgaben pro Monat) — <span style={{ color: '#a855f7', fontWeight: 600 }}>über</span> deinem Portfolio.
+            {cs(props.locale, 'yearSubtitleUnlocked')}
           </div>
         ) : (
           <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 10, lineHeight: 1.45 }}>
-            Aus Money: Monats-Saldo (Einnahmen − Ausgaben). Portfolio weiter unten unter „Portfolio Power + Cash“, sobald LevelUp frei ist.
+            {cs(props.locale, 'yearSubtitleLocked')}
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 60 }}>
@@ -84,19 +88,19 @@ function YearMoneyOverviewCard(props: {
                     background: pos ? '#2563eb' : '#ff7b7b',
                     borderRadius: 3,
                   }}
-                  title={`${MONTH_SHORT_DE[i]}: ${props.formatMoney(net)}`}
+                  title={`${monthLabel(i, props.locale)}: ${props.formatMoney(net)}`}
                 />
-                <div style={{ fontSize: 8, color: '#8b949e' }}>{MONTH_SHORT_DE[i]}</div>
+                <div style={{ fontSize: 8, color: '#8b949e' }}>{monthLabel(i, props.locale)}</div>
               </div>
             );
           })}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' as const, marginTop: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 11, color: '#2563eb' }}>▮ Plus</span>
-            <span style={{ fontSize: 11, color: '#ff7b7b' }}>▮ Minus</span>
+            <span style={{ fontSize: 11, color: '#2563eb' }}>{cs(props.locale, 'plusLegend')}</span>
+            <span style={{ fontSize: 11, color: '#ff7b7b' }}>{cs(props.locale, 'minusLegend')}</span>
           </div>
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3' }}>Jahres-Score: {props.formatMoney(yearSum)}</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#e6edf3' }}>{cs(props.locale, 'yearScore', { amount: props.formatMoney(yearSum) })}</span>
         </div>
       </div>
     </div>
@@ -107,6 +111,8 @@ const chartMargins = { top: 6, right: 8, bottom: 0, left: 0 };
 const wealthChartMargins = { top: 12, right: 8, bottom: 4, left: 0 };
 
 type Props = {
+  locale: AppLocale;
+  formatMoney: (n: number) => string;
   transactions: ChartTx[];
   debts: ChartDebt[];
   notgroschenBalance: number;
@@ -131,14 +137,35 @@ type Props = {
 };
 
 /** Detailkarte unter dem Chart — blockiert keine weiteren Klicks auf die Linie. */
-function WealthDetailPanel({ row, onClose }: { row: WealthLinePt; onClose: () => void }) {
+function WealthDetailPanel({
+  row,
+  locale,
+  formatMoney,
+  onClose,
+}: {
+  row: WealthLinePt;
+  locale: AppLocale;
+  formatMoney: (n: number) => string;
+  onClose: () => void;
+}) {
   const hadDebtHere = row.schulden > 0.5;
   const hadImmoHere = row.immobilienWert > 0.5;
   const hadPortfolioHere = row.portfolioPlusCash > 0.5;
-  const lineSub: Array<[string, number, string]> = [['Notgroschen', row.notgroschen, '#5b93ff']];
-  if (hadPortfolioHere) lineSub.push(['Portfolio inkl. Cash', row.portfolioPlusCash, '#a855f7']);
-  if (hadImmoHere) lineSub.push(['Immobilien (Marktwert)', row.immobilienWert, '#2563eb']);
-  if (hadDebtHere) lineSub.push(['Schulden (Rest)', row.schulden, '#f0883e']);
+  const lineSub: Array<[string, number, string]> = [[cs(locale, 'emergencyFund'), row.notgroschen, '#5b93ff']];
+  if (hadPortfolioHere) lineSub.push([cs(locale, 'portfolioInclCash'), row.portfolioPlusCash, '#a855f7']);
+  if (hadImmoHere) lineSub.push([cs(locale, 'propertyMarketValue'), row.immobilienWert, '#2563eb']);
+  if (hadDebtHere) lineSub.push([cs(locale, 'debtsRemaining'), row.schulden, '#f0883e']);
+  const totalLabel = hadPortfolioHere
+    ? hadImmoHere
+      ? cs(locale, 'totalNgPortfolioImmoDebt')
+      : hadDebtHere
+        ? cs(locale, 'totalNgPortfolioDebt')
+        : cs(locale, 'totalNgPortfolio')
+    : hadImmoHere
+      ? cs(locale, 'totalNgImmoDebt')
+      : hadDebtHere
+        ? cs(locale, 'totalNgDebt')
+        : cs(locale, 'totalNg');
   return (
     <div
       style={{
@@ -155,7 +182,7 @@ function WealthDetailPanel({ row, onClose }: { row: WealthLinePt; onClose: () =>
         <button
           type="button"
           onClick={onClose}
-          aria-label="Details schließen"
+          aria-label={cs(locale, 'closeDetails')}
           style={{
             background: 'none',
             border: 'none',
@@ -172,27 +199,15 @@ function WealthDetailPanel({ row, onClose }: { row: WealthLinePt; onClose: () =>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${aw.line}` }}>
         <span style={{ width: 10, height: 10, borderRadius: 2, background: '#00d4aa', flexShrink: 0 }} />
-        <span style={{ color: '#8b949e' }}>
-          {hadPortfolioHere
-            ? hadImmoHere
-              ? 'Gesamt (NG + Portfolio + Immobilien − Schulden):'
-              : hadDebtHere
-                ? 'Gesamt (NG + Portfolio − Schulden):'
-                : 'Gesamt (Notgroschen + Portfolio):'
-            : hadImmoHere
-              ? 'Gesamt (NG + Immobilien − Schulden):'
-              : hadDebtHere
-                ? 'Gesamt (Notgroschen − Schulden):'
-                : 'Gesamt (Notgroschen):'}
-        </span>{' '}
-        <strong style={{ color: '#00d4aa' }}>{EUR_FMT.format(row.saldoKomplett)}</strong>
+        <span style={{ color: '#8b949e' }}>{totalLabel}</span>{' '}
+        <strong style={{ color: '#00d4aa' }}>{formatMoney(row.saldoKomplett)}</strong>
       </div>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#7d8590', marginBottom: 6 }}>Einzelteil zum Stichtag</div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#7d8590', marginBottom: 6 }}>{cs(locale, 'componentsAtDate')}</div>
       {lineSub.map(([title, val, col]) => (
         <div key={title} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: col, flexShrink: 0 }} />
           <span style={{ color: '#8b949e', flex: '1 1 auto' }}>{title}</span>
-          <strong>{EUR_FMT.format(typeof val === 'number' ? val : 0)}</strong>
+          <strong>{formatMoney(typeof val === 'number' ? val : 0)}</strong>
         </div>
       ))}
     </div>
@@ -220,7 +235,17 @@ type WealthChartClickState = {
   activeLabel?: string;
 };
 
-function PieTooltip({ active, payload }: { active?: boolean; payload?: readonly { payload?: PieSlice & { pct?: number } }[] }) {
+function PieTooltip({
+  active,
+  payload,
+  locale,
+  formatMoney,
+}: {
+  active?: boolean;
+  payload?: readonly { payload?: PieSlice & { pct?: number } }[];
+  locale: AppLocale;
+  formatMoney: (n: number) => string;
+}) {
   if (!active || !payload?.[0]?.payload) return null;
   const p = payload[0].payload;
   const pct = p.pct ?? 0;
@@ -238,13 +263,25 @@ function PieTooltip({ active, payload }: { active?: boolean; payload?: readonly 
     >
       <div style={{ fontWeight: 800 }}>{p.name}</div>
       <div style={{ marginTop: 4, color: '#8b949e' }}>
-        {EUR_FMT.format(p.value)} · ca. {pct.toFixed(0)} %
+        {cs(locale, 'pieTooltip', { amount: formatMoney(p.value), pct: pct.toFixed(0) })}
       </div>
     </div>
   );
 }
 
-function PieBlock({ title, subtitle, slices }: { title: string; subtitle: string; slices: PieSlice[] }) {
+function PieBlock({
+  title,
+  subtitle,
+  slices,
+  locale,
+  formatMoney,
+}: {
+  title: string;
+  subtitle: string;
+  slices: PieSlice[];
+  locale: AppLocale;
+  formatMoney: (n: number) => string;
+}) {
   const withPct = useMemo(() => {
     const sum = slices.reduce((s, x) => s + x.value, 0);
     if (sum <= 0) return [] as Array<PieSlice & { pct: number; key: string }>;
@@ -256,7 +293,7 @@ function PieBlock({ title, subtitle, slices }: { title: string; subtitle: string
       <div style={{ fontSize: 12, fontWeight: 800, color: '#c9d1d9', marginBottom: 6 }}>{title}</div>
       <div style={{ fontSize: 10, color: '#8b949e', marginBottom: 10, lineHeight: 1.45 }}>{subtitle}</div>
       {withPct.length === 0 ? (
-        <div style={{ fontSize: 12, color: '#8b949e', padding: '24px 0', textAlign: 'center' as const }}>Noch keine Daten — Buchungen unter Money ergänzen.</div>
+        <div style={{ fontSize: 12, color: '#8b949e', padding: '24px 0', textAlign: 'center' as const }}>{cs(locale, 'pieNoData')}</div>
       ) : (
         <div style={{ width: '100%', height: 240 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -277,7 +314,7 @@ function PieBlock({ title, subtitle, slices }: { title: string; subtitle: string
                   <Cell key={entry.key} fill={PIE_PALETTE[i % PIE_PALETTE.length]} />
                 ))}
               </Pie>
-              <Tooltip content={<PieTooltip />} />
+              <Tooltip content={<PieTooltip locale={locale} formatMoney={formatMoney} />} />
             </PieChart>
           </ResponsiveContainer>
         </div>
@@ -287,6 +324,7 @@ function PieBlock({ title, subtitle, slices }: { title: string; subtitle: string
 }
 
 export default function HomeChartsSection(props: Props) {
+  const { locale, formatMoney } = props;
   const { wealth, portfolioOnly, spanCount, isDailySnapshotSeries } = useMemo(
     () =>
       resolveHomeChartSeries(
@@ -383,19 +421,16 @@ export default function HomeChartsSection(props: Props) {
     <div style={{ ...cardStyle, marginTop: standalone ? 0 : 12 }}>
       {standalone ? (
         <div style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: '#f8d03a', letterSpacing: '0.06em', marginBottom: 4 }}>ÜBERSICHT</div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: '#e6edf3' }}>📈 Diagramme &amp; Verlauf</div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#f8d03a', letterSpacing: '0.06em', marginBottom: 4 }}>{cs(locale, 'overviewLabel')}</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: '#e6edf3' }}>{cs(locale, 'title')}</div>
           <div style={{ fontSize: 12, color: '#8b949e', marginTop: 10, lineHeight: 1.5 }}>
             {isDailySnapshotSeries ? (
               <>
-                <strong style={{ color: '#c9d1d9' }}>Täglicher Verlauf:</strong> ein Eintrag pro Kalendertag mit Live-Stand (Portfolio inkl. Kurse, Notgroschen, Schulden) — bis zu {spanCount} Tage.
-                Ohne History nutzen wir die Monatsrekonstruktion aus Buchungen.
+                <strong style={{ color: '#c9d1d9' }}>{cs(locale, 'standaloneDailyLead')}</strong>{' '}
+                {cs(locale, 'standaloneDailyBody', { count: String(spanCount) })}
               </>
             ) : (
-              <>
-                Monatsverlauf aus Buchungen &amp; Orders rekonstruiert (max. {spanCount} Monate). Positionswerte mit <strong style={{ color: '#c9d1d9' }}>heutigem</strong>{' '}
-                Kurs simuliert — bei manuellen Ständen ohne Buchung können Abweichungen entstehen. Mit mindestens zwei Tages-Snapshots erscheint hier die tägliche Kurve.
-              </>
+              cs(locale, 'standaloneMonthlyBody', { count: String(spanCount) })
             )}
           </div>
         </div>
@@ -419,19 +454,12 @@ export default function HomeChartsSection(props: Props) {
             aria-expanded={open}
           >
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: '#f8d03a', letterSpacing: '0.06em', marginBottom: 4 }}>ÜBERSICHT</div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: '#e6edf3' }}>📈 Diagramme &amp; Verlauf</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: '#f8d03a', letterSpacing: '0.06em', marginBottom: 4 }}>{cs(locale, 'overviewLabel')}</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#e6edf3' }}>{cs(locale, 'title')}</div>
               <div style={{ fontSize: 11, color: '#8b949e', marginTop: 6, lineHeight: 1.45 }}>
-                {isDailySnapshotSeries ? (
-                  <>
-                    Tägliche Einträge mit Live-Portfolio (max. {spanCount} Tage). Sonst Monatsrekonstruktion aus Buchungen.
-                  </>
-                ) : (
-                  <>
-                    Monatsverlauf aus Buchungen &amp; Orders rekonstruiert (max. {spanCount} Monate). Positionswerte mit <strong style={{ color: '#c9d1d9' }}>heutigem</strong> Kurs simuliert. Ab
-                    zwei Tagen mit gespeicherter Übersicht: tägliche Kurve.
-                  </>
-                )}
+                {isDailySnapshotSeries
+                  ? cs(locale, 'collapsedDaily', { count: String(spanCount) })
+                  : cs(locale, 'collapsedMonthly', { count: String(spanCount) })}
               </div>
             </div>
             <span style={{ fontSize: 14, color: '#8b949e', fontWeight: 800, flexShrink: 0 }}>{open ? '▼' : '▶'}</span>
@@ -443,6 +471,7 @@ export default function HomeChartsSection(props: Props) {
         <div style={{ marginTop: standalone ? 4 : 16 }}>
           {standalone && props.moneyYearOverview ? (
             <YearMoneyOverviewCard
+              locale={locale}
               reportYear={props.moneyYearOverview.reportYear}
               buckets={props.moneyYearOverview.buckets}
               levelUpLocked={props.moneyYearOverview.levelUpLocked}
@@ -451,15 +480,15 @@ export default function HomeChartsSection(props: Props) {
           ) : null}
           <ChartBlock
             topSpacing={standalone && props.moneyYearOverview ? 4 : 0}
-            title="Komplette Vermögensübersicht"
+            title={cs(locale, 'wealthTitle')}
             subtitle={
               levelUpLocked
                 ? isDailySnapshotSeries
-                  ? 'Notgroschen + Immobilien (Boost) − Schulden — Portfolio erst nach Freischaltung von LevelUp.'
-                  : 'Notgroschen + Immobilien (Boost) − Schulden. Portfolio fließt ein, sobald LevelUp frei ist.'
+                  ? cs(locale, 'wealthSubtitleLockedDaily')
+                  : cs(locale, 'wealthSubtitleLockedMonthly')
                 : isDailySnapshotSeries
-                  ? 'Punkt auf der Linie antippen — Details erscheinen unter dem Diagramm.'
-                  : 'Punkt auf der Linie antippen — Details unter dem Diagramm.'
+                  ? cs(locale, 'wealthSubtitleDaily')
+                  : cs(locale, 'wealthSubtitleMonthly')
             }
           >
             <ResponsiveContainer width="100%" height={260}>
@@ -509,7 +538,7 @@ export default function HomeChartsSection(props: Props) {
                   }}
                   strokeWidth={3}
                   activeDot={{ r: 7, stroke: '#00d4aa', strokeWidth: 2, fill: '#161b22' }}
-                  name={levelUpLocked ? 'NG + Immobilien − Schulden' : 'NG + Portfolio + Immobilien − Schulden'}
+                  name={levelUpLocked ? cs(locale, 'legendLocked') : cs(locale, 'legendFull')}
                   dataKey="saldoKomplett"
                   stroke="#00d4aa"
                 />
@@ -517,10 +546,10 @@ export default function HomeChartsSection(props: Props) {
             </ResponsiveContainer>
             <div ref={wealthDetailRef} style={{ marginTop: 14 }}>
               {wealthDetail ? (
-                <WealthDetailPanel row={wealthDetail} onClose={() => setWealthDetail(null)} />
+                <WealthDetailPanel row={wealthDetail} locale={locale} formatMoney={formatMoney} onClose={() => setWealthDetail(null)} />
               ) : (
                 <div style={{ fontSize: 11, color: '#6e7681', textAlign: 'center' as const, padding: '6px 0 2px' }}>
-                  Punkt auf der Linie antippen — Einzelheiten erscheinen hier.
+                  {cs(locale, 'tapHint')}
                 </div>
               )}
             </div>
@@ -536,19 +565,16 @@ export default function HomeChartsSection(props: Props) {
                 marginBottom: 8,
               }}
             >
-              <div style={{ fontSize: 12, fontWeight: 800, color: '#c9d1d9', marginBottom: 6 }}>💎 Portfolio Power + Cash</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#c9d1d9', marginBottom: 6 }}>{cs(locale, 'portfolioLockedTitle')}</div>
               <div style={{ fontSize: 11, color: '#8b949e', lineHeight: 1.5 }}>
-                Erst sichtbar, wenn LevelUp freigeschaltet ist (z. B. Schulden abgebaut oder Notgroschen-Ziel erreicht — je nach deinem Modus). Bis dahin zählen nur
-                Notgroschen, Immobilien-Marktwert und Schulden in der Vermögensübersicht.
+                {cs(locale, 'portfolioLockedBody')}
               </div>
             </div>
           ) : (
             <ChartBlock
-              title="Portfolio Power + Cash"
+              title={cs(locale, 'portfolioTitle')}
               subtitle={
-                isDailySnapshotSeries
-                  ? 'Portfolio inkl. Cash Depot zum Tages-Stichtag (wie unter „Komplette Vermögensübersicht“ gespeichert).'
-                  : 'Investierter Wert (heutige Kurse) plus Cash Depot zum Monatsende.'
+                isDailySnapshotSeries ? cs(locale, 'portfolioSubtitleDaily') : cs(locale, 'portfolioSubtitleMonthly')
               }
             >
               <ResponsiveContainer width="100%" height={220}>
@@ -561,7 +587,7 @@ export default function HomeChartsSection(props: Props) {
                     width={32}
                   />
                   <Tooltip
-                    formatter={(value: number) => [EUR_FMT.format(Number(value)), 'Portfolio + Cash']}
+                    formatter={(value: number) => [formatMoney(Number(value)), cs(locale, 'portfolioTooltip')]}
                     labelStyle={{ color: '#c9d1d9' }}
                     contentStyle={{ background: '#161b22', border: `1px solid ${aw.line}`, borderRadius: 8 }}
                   />
@@ -582,37 +608,43 @@ export default function HomeChartsSection(props: Props) {
             }}
           >
             <PieBlock
-              title="Einnahmen nach Kategorie"
-              subtitle="Summe aller Einnahmen je Kategorie (alle Buchungen unter Money — z. B. mehrere Trinkgeld-Einträge werden addiert)."
+              title={cs(locale, 'incomePieTitle')}
+              subtitle={cs(locale, 'incomePieSubtitle')}
               slices={props.incomePie}
+              locale={locale}
+              formatMoney={formatMoney}
             />
             <PieBlock
-              title="Fixkosten (letzte Beträge je Position)"
-              subtitle="Aus Abos, Miete und Kreditrate — gleiche Logik wie unter Money."
+              title={cs(locale, 'fixedPieTitle')}
+              subtitle={cs(locale, 'fixedPieSubtitle')}
               slices={props.fixedPie}
+              locale={locale}
+              formatMoney={formatMoney}
             />
             <PieBlock
-              title="Variable Kosten (letzte Beträge je Position)"
-              subtitle="Essen &amp; Trinken, Fahrt, Kleidung, Gesundheit, Freizeit, Sonstiges — je Kategorie + Notiz."
+              title={cs(locale, 'varPieTitle')}
+              subtitle={cs(locale, 'varPieSubtitle')}
               slices={props.varPie}
+              locale={locale}
+              formatMoney={formatMoney}
             />
           </div>
 
           {hasOpenDebts ? (
             <ChartBlock
-              title="Schulden‑Entwicklung"
-              subtitle="Links die Geld‑Achse (Restschuld in €), unten die Zeit‑Richtung von „Start“ (Summe Ursprungsbeträge) bis „jetzt“ (aktueller Rest). Höhe der Kurve = Schuldenbetrag."
+              title={cs(locale, 'debtTitle')}
+              subtitle={cs(locale, 'debtSubtitle')}
             >
               {paydownOriginal > 0 ? (
                 <>
                   <div style={{ fontSize: 11, color: '#8b949e', marginBottom: 8 }}>
-                    Fläche unter der Kurve: warmer Verlauf Richtung Tilgung. Endpunkt rechts entspricht deinem Rest heute.
+                    {cs(locale, 'debtChartHint')}
                   </div>
                   <DebtPaydownCurve original={paydownOriginal} remaining={paydownRemaining} />
                 </>
               ) : (
                 <div style={{ fontSize: 12, color: '#8b949e', paddingBottom: 4 }}>
-                  Lege unter Boost bei jeder offenen Schuld einen Gesamtbetrag fest — dann zeigt sich die Kurve.
+                  {cs(locale, 'debtEmpty')}
                 </div>
               )}
             </ChartBlock>
