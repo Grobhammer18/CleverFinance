@@ -54,6 +54,8 @@ export type InvestDraft = {
 
 export type OnboardingV2Payload = {
   financeWho: FinanceWho;
+  /** Gewählte Grundwährung (ISO-Code, z. B. EUR). */
+  baseCurrency: string;
   netIncomeMonthly: number;
   hasDebt: boolean;
   debtKinds: { consumer: boolean; house: boolean };

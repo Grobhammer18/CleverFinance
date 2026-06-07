@@ -7,9 +7,11 @@ import {
   useState,
   type ChangeEvent,
   type CSSProperties,
+  type ReactNode,
 } from 'react';
 import { flushSync } from 'react-dom';
 import OnboardingWizard from './OnboardingWizard';
+import LanguagePickScreen from './LanguagePickScreen';
 import type { LevelUpMode, OnboardingV2Payload } from '../onboarding/onboardingLogic';
 import {
   notgroschenTargetFromIncome,
@@ -40,6 +42,16 @@ import {
   normalizeBaseCurrency,
   pickVacationCurrency,
 } from '../currencyFx';
+import { LocaleProvider } from '../i18n/LocaleContext';
+import { t as translate } from '../i18n/messages';
+import {
+  localeToIntlTag,
+  normalizeLocale,
+  readStoredLocale,
+  writeStoredLocale,
+  APP_LOCALES,
+  type AppLocale,
+} from '../i18n/locale';
 import { getOverviewDemoSnapshot, OVERVIEW_DEMO_HINT } from '../demo/overviewDemoSample';
 import {
   PORTFOLIO_POWER_MILESTONE_EURS,
@@ -585,6 +597,7 @@ type UserStateCache = {
   portfolioBrokerCash?: number;
   levelUpMode?: LevelUpMode;
   baseCurrency?: string;
+  locale?: string;
   vacationMode?: boolean;
   vacationCurrency?: string;
   savedAt?: number;
@@ -1638,7 +1651,7 @@ export default function AllWin() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [legalSheet, setLegalSheet] = useState<null | 'impressum' | 'rechtlich' | 'disclaimer'>(null);
   const [profileSection, setProfileSection] = useState<
-    'overview' | 'subscription' | 'personal' | 'notifications' | 'feedback' | 'redeem' | 'orden'
+    'overview' | 'subscription' | 'personal' | 'notifications' | 'feedback' | 'redeem' | 'orden' | 'language'
   >('overview');
   const [feedbackKind, setFeedbackKind] = useState<'bug' | 'improve' | 'feature' | 'other'>('improve');
   const [feedbackMessage, setFeedbackMessage] = useState('');
@@ -1667,6 +1680,8 @@ export default function AllWin() {
   }, []);
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
   const [authGate, setAuthGate] = useState<'welcome' | 'auth'>('welcome');
+  const [locale, setLocaleState] = useState<AppLocale>(() => readStoredLocale());
+  const [preOnboardingPhase, setPreOnboardingPhase] = useState<'language' | 'wizard'>('language');
   const [onboardingDone, setOnboardingDone] = useState(false);
   const [onboardingV2, setOnboardingV2] = useState<OnboardingV2Payload | null>(null);
   const [levelUpMode, setLevelUpMode] = useState<LevelUpMode>(() => {
@@ -1886,7 +1901,10 @@ export default function AllWin() {
     if (Number.isNaN(raw) || raw <= 0 || !Number.isFinite(fxBasePerUnit) || fxBasePerUnit <= 0) return null;
     return convertForeignToBase(raw, fxBasePerUnit);
   }, [form.amount, form.currency, baseCurrency, fxBasePerUnit]);
-  const fmtMoney = useCallback((n: number) => formatMoneyAmount(n, baseCurrency), [baseCurrency]);
+  const fmtMoney = useCallback(
+    (n: number) => formatMoneyAmount(n, baseCurrency, localeToIntlTag(locale)),
+    [baseCurrency, locale],
+  );
   const defaultFormCurrency = useCallback(
     () => bookingCurrency(baseCurrency, vacationMode, vacationCurrency),
     [baseCurrency, vacationMode, vacationCurrency],
@@ -2310,8 +2328,11 @@ export default function AllWin() {
           ordenLoad = normalizeEarnedOrdenOnLoad(pr.ordenEarnedPresetIds, pr.manualOrden);
         }
         const loadedBaseCurrency = normalizeBaseCurrency(
-          (state as { baseCurrency?: unknown }).baseCurrency ?? cached?.baseCurrency,
+          (state as { baseCurrency?: unknown }).baseCurrency ??
+            v2?.baseCurrency ??
+            cached?.baseCurrency,
         );
+        const loadedLocale = normalizeLocale((state as { locale?: unknown }).locale ?? cached?.locale);
         const loadedVacationMode = (state as { vacationMode?: unknown }).vacationMode === true || cached?.vacationMode === true;
         const loadedVacationCurrency = pickVacationCurrency(
           loadedBaseCurrency,
@@ -2321,6 +2342,8 @@ export default function AllWin() {
           setOnboardingV2(v2);
           setLevelUpMode(resolvedMode);
           setBaseCurrency(loadedBaseCurrency);
+          setLocaleState(loadedLocale);
+          writeStoredLocale(loadedLocale);
           setVacationMode(loadedVacationMode);
           setVacationCurrency(loadedVacationCurrency);
           setDebts(
@@ -2345,6 +2368,7 @@ export default function AllWin() {
           portfolioBrokerCash: brokerCash,
           levelUpMode: resolvedMode,
           baseCurrency: loadedBaseCurrency,
+          locale: loadedLocale,
           vacationMode: loadedVacationMode,
           vacationCurrency: loadedVacationCurrency,
         });
@@ -2387,6 +2411,7 @@ export default function AllWin() {
       const ngT = override?.notgroschenTarget ?? notgroschenTarget;
       const broker = override?.portfolioBrokerCash ?? portfolioBrokerCash;
       const baseCur = normalizeBaseCurrency(override?.baseCurrency ?? baseCurrency);
+      const loc = normalizeLocale(override?.locale ?? locale);
       const vacMode = override?.vacationMode ?? vacationMode;
       const vacCur = pickVacationCurrency(baseCur, override?.vacationCurrency ?? vacationCurrency);
       writeUserStateCache(authUser.id, {
@@ -2397,6 +2422,7 @@ export default function AllWin() {
         portfolioBrokerCash: broker,
         levelUpMode,
         baseCurrency: baseCur,
+        locale: loc,
         vacationMode: vacMode,
         vacationCurrency: vacCur,
       });
@@ -2418,6 +2444,7 @@ export default function AllWin() {
         portfolioExcludedBaseSyms,
         dailyVermogenSnapshots,
         baseCurrency: baseCur,
+        locale: loc,
         vacationMode: vacMode,
         vacationCurrency: vacCur,
       };
@@ -2521,9 +2548,25 @@ export default function AllWin() {
       onboardingV2,
       levelUpMode,
       baseCurrency,
+      locale,
       vacationMode,
       vacationCurrency,
     ],
+  );
+
+  const applyLocale = useCallback(
+    (next: AppLocale, opts?: { silent?: boolean }) => {
+      setLocaleState(next);
+      writeStoredLocale(next);
+      if (authUser?.id) {
+        writeUserStateCache(authUser.id, { locale: next });
+        if (cloudPersistReadyRef.current && authToken) {
+          void persistUserState({ locale: next }, { background: true });
+        }
+      }
+      if (!opts?.silent) showToast(translate('language.changed', next), 'success');
+    },
+    [authUser?.id, authToken, persistUserState],
   );
 
   const persistMoneyPrefs = useCallback(
@@ -3198,6 +3241,8 @@ export default function AllWin() {
   const completeOnboarding = (p: OnboardingV2Payload) => {
     setOnboardingV2(p);
     setLevelUpMode(p.levelUpMode);
+    const bc = normalizeBaseCurrency(p.baseCurrency);
+    setBaseCurrency(bc);
     const target = notgroschenTargetFromIncome(p.netIncomeMonthly);
     const emergencyBalance = p.emergency.has ? Math.max(0, p.emergency.balance) : 0;
     setNotgroschenTarget(target);
@@ -3234,6 +3279,10 @@ export default function AllWin() {
     writeCelebratedPortfolioMilestones(authUser?.id, seededCelebrated);
     setCelebratedMilestones(seededCelebrated);
     setOnboardingDone(true);
+    setPreOnboardingPhase('wizard');
+    if (authUser?.id) {
+      writeUserStateCache(authUser.id, { baseCurrency: bc, locale });
+    }
     writeLocalOnboardingDone(authUser?.id, authUser?.email);
     cloudOnboardingHydratedRef.current = true;
     setTab('dashboard');
@@ -3247,6 +3296,8 @@ export default function AllWin() {
         body: JSON.stringify({
           state: {
             onboarding: { done: true, v2: p },
+            baseCurrency: bc,
+            locale,
           },
         }),
       }).catch(() => {
@@ -3276,6 +3327,7 @@ export default function AllWin() {
   const restartOnboarding = () => {
     setOnboardingDone(false);
     setOnboardingV2(null);
+    setPreOnboardingPhase('language');
     setLevelUpMode('full');
     setWizardRemount((n) => n + 1);
     setProfileSection('overview');
@@ -5164,12 +5216,12 @@ export default function AllWin() {
   );
 
   const tabs = [
-    { id: 'dashboard', icon: '🏠', label: 'Home' },
-    { id: 'transactions', icon: '💸', label: 'Money' },
-    { id: 'charts', icon: '📈', label: 'Übersicht' },
-    { id: 'debts', icon: '⚡', label: 'Boost' },
-    { id: 'invest', icon: '📊', label: 'LevelUp' },
-    { id: 'profile', icon: '👤', label: 'Mehr' },
+    { id: 'dashboard', icon: '🏠', label: translate('nav.home', locale) },
+    { id: 'transactions', icon: '💸', label: translate('nav.money', locale) },
+    { id: 'charts', icon: '📈', label: translate('nav.charts', locale) },
+    { id: 'debts', icon: '⚡', label: translate('nav.boost', locale) },
+    { id: 'invest', icon: '📊', label: translate('nav.levelUp', locale) },
+    { id: 'profile', icon: '👤', label: translate('nav.more', locale) },
   ];
   const hasOpenDebts = useMemo(() => debts.some((d) => d.remaining > 0), [debts]);
   const tabsVisible = useMemo(
@@ -7537,11 +7589,12 @@ export default function AllWin() {
       <div style={S.card}>
         {(
           [
-            ['personal', '👤 Persönliche Angaben'],
-            ['notifications', '🔔 Mitteilungen'],
-            ['feedback', '💬 Feedback & Wünsche'],
-            ['orden', '🎖️ Meine Orden'],
-            ['redeem', '🎁 Code einlösen'],
+            ['language', translate('profile.language', locale)],
+            ['personal', translate('profile.personal', locale)],
+            ['notifications', translate('profile.notifications', locale)],
+            ['feedback', translate('profile.feedback', locale)],
+            ['orden', translate('profile.orden', locale)],
+            ['redeem', translate('profile.redeem', locale)],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -7659,6 +7712,43 @@ export default function AllWin() {
             </div>
           )}
         </>
+      )}
+
+      {profileSection === 'language' && (
+        <div style={S.card}>
+          <button
+            type="button"
+            style={{ ...S.chip(false), marginBottom: 10, padding: '6px 12px' }}
+            onClick={() => setProfileSection('overview')}
+          >
+            ← {translate('common.close', locale)}
+          </button>
+          <div style={S.label}>{translate('language.settingsTitle', locale)}</div>
+          <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 12, lineHeight: 1.45 }}>
+            {translate('language.settingsHint', locale)}
+          </div>
+          {APP_LOCALES.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              style={{
+                ...S.row,
+                width: '100%',
+                background: locale === opt.id ? '#2563eb22' : 'transparent',
+                border: `1px solid ${locale === opt.id ? '#2563eb' : awBg.line}`,
+                borderRadius: 10,
+                color: '#e6edf3',
+                padding: '12px 14px',
+                cursor: 'pointer',
+                marginBottom: 8,
+              }}
+              onClick={() => applyLocale(opt.id)}
+            >
+              <span style={{ fontWeight: 700 }}>{opt.native}</span>
+              <span>{locale === opt.id ? '✅' : '›'}</span>
+            </button>
+          ))}
+        </div>
       )}
 
       {profileSection === 'personal' && (
@@ -7854,37 +7944,43 @@ export default function AllWin() {
     </>
   );
 
+  const withLocale = (node: ReactNode) => (
+    <LocaleProvider locale={locale} setLocale={(l) => applyLocale(l, { silent: true })}>
+      {node}
+    </LocaleProvider>
+  );
+
   if (authLoading) {
-    return (
+    return withLocale(
       <div style={{ ...S.app, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={S.card}>Lade Benutzerkonto... ⏳</div>
-      </div>
+        <div style={S.card}>{translate('auth.loadingAccount', locale)}</div>
+      </div>,
     );
   }
 
   if (!authUser && authGate === 'welcome') {
-    return (
+    return withLocale(
       <div style={{ ...S.app, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
         <div style={{ ...S.card, width: '100%' }}>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}>
             <CleverFinanceLogo size={104} />
           </div>
           <div style={{ fontSize: 20, fontWeight: 800, textAlign: 'center', marginTop: 8, lineHeight: 1.35 }}>
-            Schön, dass du hier bist!
+            {translate('welcome.title', locale)}
           </div>
           <div style={{ fontSize: 15, color: '#7d8590', textAlign: 'center', marginTop: 10, lineHeight: 1.5 }}>
-            Meistere kinderleicht deine Finanzen.
+            {translate('welcome.subtitle', locale)}
           </div>
           <button type="button" style={{ ...S.btn(), marginTop: 20 }} onClick={() => setAuthGate('auth')}>
-            Mit E-Mail, Google oder Apple anmelden
+            {translate('welcome.cta', locale)}
           </button>
         </div>
-      </div>
+      </div>,
     );
   }
 
   if (!authUser) {
-    return (
+    return withLocale(
       <div style={{ ...S.app, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
         <div style={{ ...S.card, width: '100%' }}>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>
@@ -7892,18 +7988,18 @@ export default function AllWin() {
           </div>
           <div style={{ fontSize: 13, color: '#7d8590', marginBottom: 12 }}>
             {authMode === 'register'
-              ? 'Neues Konto — danach kurze Fragen (ca. 5 Min.), dann führt dich eine Tour mit Licht & Sprechblase durch die App. 🎉'
-              : 'Willkommen zurück — melde dich mit E-Mail und Passwort an.'}
+              ? translate('auth.registerHint', locale)
+              : translate('auth.loginHint', locale)}
           </div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
             <button style={{ ...S.chip(authMode === 'login'), flex: 1 }} onClick={() => setAuthMode('login')}>
-              🔐 Anmelden
+              🔐 {translate('auth.login', locale)}
             </button>
             <button
               style={{ ...S.chip(authMode === 'register'), flex: 1 }}
               onClick={() => setAuthMode('register')}
             >
-              ✍️ Registrieren
+              ✍️ {translate('auth.register', locale)}
             </button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -7914,11 +8010,11 @@ export default function AllWin() {
             <input style={S.input} type="password" placeholder="Passwort" value={authForm.password} onChange={(e) => setAuthForm((f) => ({ ...f, password: e.target.value }))} />
             {authError && <div style={{ fontSize: 12, color: '#ff7b7b' }}>{authError}</div>}
             <button style={S.btn()} onClick={() => void submitAuth()}>
-              {authMode === 'login' ? '🚀 Jetzt anmelden' : '🎉 Konto erstellen'}
+              {authMode === 'login' ? translate('auth.loginBtn', locale) : translate('auth.registerBtn', locale)}
             </button>
             <div style={{ ...S.row, gap: 8, marginTop: 8 }}>
               <div style={{ flex: 1, height: 1, background: awBg.line }} />
-              <div style={{ fontSize: 11, color: '#7d8590' }}>oder</div>
+              <div style={{ fontSize: 11, color: '#7d8590' }}>{translate('common.or', locale)}</div>
               <div style={{ flex: 1, height: 1, background: awBg.line }} />
             </div>
             <div ref={googleBtnRef} />
@@ -7968,32 +8064,40 @@ export default function AllWin() {
                 textUnderlineOffset: 3,
               }}
             >
-              ← Zurück zum Willkommen
+              {translate('auth.backWelcome', locale)}
             </button>
           </div>
         </div>
-      </div>
+      </div>,
     );
   }
 
   if (authUser && !cloudUserStateReady) {
-    return (
+    return withLocale(
       <div style={{ ...S.app, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={S.card}>Synchronisiere deine Daten… ⏳</div>
-      </div>
+        <div style={S.card}>{translate('auth.syncing', locale)}</div>
+      </div>,
     );
   }
 
   if (authUser && cloudUserStateReady && !onboardingDone) {
-    return (
+    return withLocale(
       <div key={wizardRemount}>
         {toast && <div style={S.toast(toast.type)}>{toast.msg}</div>}
-        <OnboardingWizard onComplete={completeOnboarding} />
-      </div>
+        {preOnboardingPhase === 'language' ? (
+          <LanguagePickScreen
+            locale={locale}
+            onSelect={(l) => applyLocale(l, { silent: true })}
+            onContinue={() => setPreOnboardingPhase('wizard')}
+          />
+        ) : (
+          <OnboardingWizard onComplete={completeOnboarding} />
+        )}
+      </div>,
     );
   }
 
-  return (
+  return withLocale(
     <div style={S.app}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700;800;900&display=swap');*{box-sizing:border-box;margin:0;padding:0}body{background-color:${awBg.appFallback};background-image:${awBg.app};background-attachment:fixed;min-height:100vh}`}</style>
 
@@ -8012,7 +8116,7 @@ export default function AllWin() {
         <div style={{ ...S.row }}>
           <div>
             <CleverFinanceLogo />
-            <div style={S.sub}>Deine Finanzen. Clever gedacht.</div>
+            <div style={S.sub}>{translate('header.tagline', locale)}</div>
             <div style={{ fontSize: 12, color: '#d0d7de', marginTop: 6, fontWeight: 700 }}>👤 {authUser.name || authUser.email}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -8024,7 +8128,7 @@ export default function AllWin() {
               {fmtMoney(saldo)}
             </div>
             <button style={{ ...S.chip(false), marginTop: 8 }} onClick={logout}>
-              👋 Logout
+              👋 {translate('header.logout', locale)}
             </button>
           </div>
         </div>

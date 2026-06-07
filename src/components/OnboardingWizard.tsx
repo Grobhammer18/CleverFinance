@@ -9,10 +9,14 @@ import {
 } from '../onboarding/onboardingLogic';
 import { allwinPalette as P } from '../theme/allwinPalette';
 import CleverFinanceLogo from './CleverFinanceLogo';
+import { MONEY_CURRENCIES, moneyCurrencyOptionLabel, moneyCurrencySymbol, normalizeBaseCurrency } from '../currencyFx';
+import { useLocale } from '../i18n/LocaleContext';
+import { financeWhoSubj, getOnboardingCopy } from '../i18n/onboardingStrings';
 
 type Step =
   | 'intro'
   | 'finance_who'
+  | 'base_currency'
   | 'net_income'
   | 'debts_yn'
   | 'debts_types'
@@ -147,8 +151,11 @@ type P2pForm = { gesamtStr: string; profitPctStr: string; mapSym: string };
 type Props = { onComplete: (p: OnboardingV2Payload) => void };
 
 export default function OnboardingWizard({ onComplete }: Props) {
+  const { locale } = useLocale();
+  const ob = useMemo(() => getOnboardingCopy(locale), [locale]);
   const [step, setStep] = useState<Step>('intro');
   const [financeWho, setFinanceWho] = useState<FinanceWho>('alone');
+  const [baseCurrency, setBaseCurrency] = useState('EUR');
   const [netIncomeStr, setNetIncomeStr] = useState('');
   const [hasDebt, setHasDebt] = useState<boolean | null>(null);
   const [debtKinds, setDebtKinds] = useState({ consumer: false, house: false });
@@ -285,6 +292,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
       : [];
     const payload: OnboardingV2Payload = {
       financeWho,
+      baseCurrency: normalizeBaseCurrency(baseCurrency),
       netIncomeMonthly: net,
       hasDebt: hasDebt === true,
       debtKinds: { ...debtKinds },
@@ -293,13 +301,16 @@ export default function OnboardingWizard({ onComplete }: Props) {
       investSkipped,
       levelUpMode: branch.levelUpMode,
       invest: investSkipped ? null : buildInvestDraft(),
-      whyHere: why.includes('Sonstiges') && whyOther.trim() ? [...why.filter((w) => w !== 'Sonstiges'), whyOther.trim()] : why,
+      whyHere: why.includes(ob.common.other) && whyOther.trim()
+        ? [...why.filter((w) => w !== ob.common.other), whyOther.trim()]
+        : why,
     };
     onComplete(payload);
   };
 
   const nextFromIntro = () => go('finance_who');
-  const nextFromFinanceWho = () => go('net_income');
+  const nextFromFinanceWho = () => go('base_currency');
+  const nextFromBaseCurrency = () => go('net_income');
   const nextFromNetIncome = () => {
     if (!Number.isFinite(netIncome) || netIncome <= 0) return;
     go('debts_yn');
@@ -394,6 +405,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
     const order: Step[] = [
       'intro',
       'finance_who',
+      'base_currency',
       'net_income',
       'debts_yn',
       'debts_types',
@@ -418,13 +430,14 @@ export default function OnboardingWizard({ onComplete }: Props) {
     return i >= 0 ? i + 1 : 1;
   }, [step]);
 
-  const stepTotal = 19;
+  const stepTotal = 20;
+  const subj = financeWhoSubj(financeWho, locale);
 
   return (
     <div style={W.app}>
       <div style={{ ...W.row, marginBottom: 8 }}>
-        <div style={{ fontSize: 12, color: '#7d8590', fontWeight: 700 }}>Clever Finance · Onboarding 😊</div>
-        <div style={{ fontSize: 12, color: '#7d8590' }}>ca. 5 Min · easy ✨</div>
+        <div style={{ fontSize: 12, color: '#7d8590', fontWeight: 700 }}>{ob.header}</div>
+        <div style={{ fontSize: 12, color: '#7d8590' }}>{ob.headerTime}</div>
       </div>
       <Bar pct={(stepIndex / stepTotal) * 100} />
 
@@ -437,30 +450,30 @@ export default function OnboardingWizard({ onComplete }: Props) {
                 🤠 ✨ 😊 🚀
               </div>
             </div>
-            <div style={{ ...W.logo, textAlign: 'center', marginTop: 4 }}>
-              Hey! Schön, dass <span style={W.logoAccent}>{p.subj}</span> hier {p.subj === 'ihr' ? 'seid' : 'bist'}! 🎉
-            </div>
+            <div style={{ ...W.logo, textAlign: 'center', marginTop: 4 }}>{ob.intro.hey(subj)}</div>
             <div style={{ fontSize: 15, color: '#9aa7b5', textAlign: 'center', marginTop: 6, lineHeight: 1.5, fontWeight: 600 }}>
-              Deine Finanz-Freiheit — spielerisch, klar, ohne Druck.
+              {ob.intro.subline}
             </div>
             <div style={{ fontSize: 14, color: '#c9d1d9', textAlign: 'center', marginTop: 14, lineHeight: 1.55 }}>
-              Wir stellen ein paar Fragen, damit Clever Finance zu {p.subj === 'ihr' ? 'euch' : 'dir'} passt — danach zeigen wir dir kurz, wo du was in der App findest.
+              {ob.intro.body(subj)}
             </div>
             <button style={W.btn()} onClick={nextFromIntro}>
-              Los geht&apos;s — ich bin bereit 💪
+              {ob.intro.btn}
             </button>
           </>
         )}
 
         {step === 'finance_who' && (
           <>
-            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Wie verwaltet {p.subj} die Finanzen? 👋</div>
-            <div style={W.mood}>Kleine Auswahl — wir sprechen dich danach einfach richtig an 🙂</div>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
+              {ob.financeWho.title.replace('{subj}', subj)}
+            </div>
+            <div style={W.mood}>{ob.financeWho.mood}</div>
             {(
               [
-                ['alone', 'Alleine'],
-                ['partner', 'Mit Partner:in'],
-                ['delegate', 'Partner:in gibt das Geld — ich verwalte es'],
+                ['alone', ob.financeWho.alone],
+                ['partner', ob.financeWho.partner],
+                ['delegate', ob.financeWho.delegate],
               ] as const
             ).map(([id, label]) => (
               <button key={id} type="button" style={W.chip(financeWho === id)} onClick={() => setFinanceWho(id)}>
@@ -469,7 +482,30 @@ export default function OnboardingWizard({ onComplete }: Props) {
               </button>
             ))}
             <button style={W.btn()} onClick={nextFromFinanceWho}>
-              Passt — weiter geht&apos;s ✨
+              {ob.financeWho.btn}
+            </button>
+          </>
+        )}
+
+        {step === 'base_currency' && (
+          <>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>{ob.baseCurrency.title}</div>
+            <div style={W.mood}>{ob.baseCurrency.mood}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 280, overflowY: 'auto', paddingRight: 2 }}>
+              {MONEY_CURRENCIES.map((c) => (
+                <button
+                  key={c.code}
+                  type="button"
+                  style={W.chip(baseCurrency === c.code)}
+                  onClick={() => setBaseCurrency(c.code)}
+                >
+                  <span>{moneyCurrencyOptionLabel(c.code)}</span>
+                  <span>{baseCurrency === c.code ? '✅' : '›'}</span>
+                </button>
+              ))}
+            </div>
+            <button style={W.btn()} onClick={nextFromBaseCurrency}>
+              {ob.baseCurrency.btn}
             </button>
           </>
         )}
@@ -477,19 +513,21 @@ export default function OnboardingWizard({ onComplete }: Props) {
         {step === 'net_income' && (
           <>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
-              {financeWho === 'partner' ? 'Wie viel Netto verdient ihr zusammen? 💶' : 'Wie viel verdienst du netto (monatlich)? 💶'}
+              {financeWho === 'partner' ? ob.netIncome.titlePartner : ob.netIncome.titleAlone}
             </div>
-            <div style={W.mood}>Nur für dein Setup — Daten bleiben bei dir 🔒</div>
-            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10 }}>Angabe in € netto pro Monat.</div>
+            <div style={W.mood}>{ob.netIncome.mood}</div>
+            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10 }}>
+              {ob.netIncome.hint(moneyCurrencySymbol(baseCurrency))}
+            </div>
             <input
               style={W.input}
               inputMode="decimal"
-              placeholder="z. B. 3200 oder 3200,50"
+              placeholder={ob.netIncome.placeholder}
               value={netIncomeStr}
               onChange={(e) => setNetIncomeStr(normalizeDecimalInput(e.target.value))}
             />
             <button style={W.btn()} onClick={nextFromNetIncome} disabled={!Number.isFinite(netIncome) || netIncome <= 0}>
-              Super — weiter 😊
+              {ob.netIncome.btn}
             </button>
           </>
         )}
@@ -497,19 +535,19 @@ export default function OnboardingWizard({ onComplete }: Props) {
         {step === 'debts_yn' && (
           <>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>
-              {financeWho === 'partner' ? 'Habt ihr Schulden?' : 'Hast du Schulden?'} 🤝
+              {financeWho === 'partner' ? ob.debtsYn.titlePartner : ob.debtsYn.titleAlone}
             </div>
-            <div style={W.mood}>Ehrlich ist cool — zero Drama, nur bessere Tipps.</div>
+            <div style={W.mood}>{ob.debtsYn.mood}</div>
             <button type="button" style={W.chip(hasDebt === true)} onClick={() => setHasDebt(true)}>
-              <span>Ja</span>
+              <span>{ob.common.yes}</span>
               <span>{hasDebt === true ? '✅' : '›'}</span>
             </button>
             <button type="button" style={W.chip(hasDebt === false)} onClick={() => setHasDebt(false)}>
-              <span>Nein</span>
+              <span>{ob.common.no}</span>
               <span>{hasDebt === false ? '✅' : '›'}</span>
             </button>
             <button style={W.btn()} onClick={nextFromDebtsYn} disabled={hasDebt === null}>
-              Weiter
+              {ob.debtsYn.btn}
             </button>
           </>
         )}
@@ -621,7 +659,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
             </div>
             <div style={W.mood}>Polster = Ruhe im Kopf — wir rechnen dir ein sinnvolles Ziel aus.</div>
             <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 12 }}>
-              Empfehlung: 2–3 Monatsgehälter als Polster. Zielvorschlag: ca. {fmtEuro(notgroschenTargetFromIncome(netIncome))} (2,5× Netto).
+              Empfehlung: 2–3 Monatsgehälter als Polster. Zielvorschlag: ca. {ob.fmtMoney(notgroschenTargetFromIncome(netIncome), baseCurrency, locale)} (2,5× Netto).
             </div>
             <button type="button" style={W.chip(emergencyHas === true)} onClick={() => setEmergencyHas(true)}>
               <span>Ja</span>
@@ -686,7 +724,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
                 </>
               ) : (
                 <>
-                  Ohne Notgroschen überspringen wir die Investment-Fragen im Onboarding — <strong>LevelUp</strong> (Portfolio, Orders, Live-Kurse) bleibt für dich trotzdem nutzbar. Bitte baut parallel euren Notgroschen unter Home auf (⋮ → „Stand bearbeiten“, Ziel ca. {fmtEuro(notgroschenTargetFromIncome(netIncome))}).
+                  Ohne Notgroschen überspringen wir die Investment-Fragen im Onboarding — <strong>LevelUp</strong> (Portfolio, Orders, Live-Kurse) bleibt für dich trotzdem nutzbar. Bitte baut parallel euren Notgroschen unter Home auf (⋮ → „Stand bearbeiten“, Ziel ca. {ob.fmtMoney(notgroschenTargetFromIncome(netIncome), baseCurrency, locale)}).
                 </>
               )}
             </div>
@@ -1075,13 +1113,15 @@ export default function OnboardingWizard({ onComplete }: Props) {
           <>
             <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Warum bist du hier? 💬</div>
             <div style={W.mood}>Damit wir die App für dich noch passender machen.</div>
-            {WHY.map((t) => (
+            {ob.whyHere.map((t) => (
               <button key={t} type="button" style={W.chip(why.includes(t))} onClick={() => toggle(why, t, setWhy)}>
                 <span>{t}</span>
                 <span>{why.includes(t) ? '✓' : ''}</span>
               </button>
             ))}
-            {why.includes('Sonstiges') && <input style={{ ...W.input, marginTop: 8 }} placeholder="Sonstiges" value={whyOther} onChange={(e) => setWhyOther(e.target.value)} />}
+            {why.includes(ob.common.other) && (
+              <input style={{ ...W.input, marginTop: 8 }} placeholder={ob.common.other} value={whyOther} onChange={(e) => setWhyOther(e.target.value)} />
+            )}
             <button style={W.btn()} onClick={nextFromWhy} disabled={!why.length}>
               Weiter
             </button>
@@ -1094,21 +1134,17 @@ export default function OnboardingWizard({ onComplete }: Props) {
               <CleverFinanceLogo size={72} />
             </div>
             <div style={{ fontSize: 20, fontWeight: 900, textAlign: 'center', lineHeight: 1.35 }}>
-              🎉 {p.subj === 'ihr' ? 'Ihr' : 'Du'} bist startklar!
+              {financeWho === 'partner' ? ob.finish.titlePartner : ob.finish.titleAlone}
             </div>
             <div style={{ fontSize: 14, color: '#7d8590', textAlign: 'center', marginTop: 10, lineHeight: 1.5 }}>
-              Deine Antworten sind gespeichert. Gleich führt dich eine kurze Tour mit Licht & Sprechblase durch die App. ✨
+              {ob.finish.body}
             </div>
             <button style={W.btn()} onClick={submitWizard}>
-              Clever Finance starten 🚀
+              {ob.finish.btn}
             </button>
           </>
         )}
       </div>
     </div>
   );
-}
-
-function fmtEuro(n: number) {
-  return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(n);
 }

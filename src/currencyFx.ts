@@ -74,12 +74,12 @@ export function pickVacationCurrency(baseCurrency: string, preferred?: unknown):
   return MONEY_CURRENCIES.find((c) => c.code !== base)?.code ?? usd;
 }
 
-export function formatMoneyAmount(n: number, currencyCode: string = BASE_CURRENCY): string {
+export function formatMoneyAmount(n: number, currencyCode: string = BASE_CURRENCY, localeTag = 'de-DE'): string {
   const code = normalizeBaseCurrency(currencyCode);
   try {
-    return new Intl.NumberFormat('de-DE', { style: 'currency', currency: code }).format(n);
+    return new Intl.NumberFormat(localeTag, { style: 'currency', currency: code }).format(n);
   } catch {
-    return `${n.toLocaleString('de-DE')} ${moneyCurrencySymbol(code)}`;
+    return `${n.toLocaleString(localeTag)} ${moneyCurrencySymbol(code)}`;
   }
 }
 
