@@ -310,13 +310,9 @@ function compareTxRecency(a: Transaction, b: Transaction): number {
   return compareTxByDateDesc(a, b);
 }
 
-function moneyTxMonthKey(year: number, month0: number) {
-  return `${year}-${month0}`;
-}
-
-function moneyTxMonthLabel(year: number, month0: number) {
-  return `${MONTHS[month0]} ${String(year).slice(-2)}`;
-}
+/** Sichtbare Zeilen in „Letzte Buchungen“ — Rest per internem Scroll. */
+const MONEY_RECENT_TX_VISIBLE = 5;
+const MONEY_RECENT_TX_ROW_PX = 58;
 
 /** Ausgaben-Kategorien mit Positionsliste unter Money („laufende Fixkosten“). */
 const FIXKOST_CATEGORIES = new Set(['Abos', 'Miete', 'Kreditrate']);
@@ -1713,12 +1709,11 @@ export default function AllWin() {
   const [receiptScanning, setReceiptScanning] = useState(false);
   const receiptCameraInputRef = useRef<HTMLInputElement>(null);
   const receiptLibraryInputRef = useRef<HTMLInputElement>(null);
+  const moneyFormRef = useRef<HTMLDivElement | null>(null);
   const [moneyIncomeOpen, setMoneyIncomeOpen] = useState(() => !isMoneyCompactViewport());
   const [moneyFixedCostsOpen, setMoneyFixedCostsOpen] = useState(() => !isMoneyCompactViewport());
   const [moneyVarCostsOpen, setMoneyVarCostsOpen] = useState(() => !isMoneyCompactViewport());
   const [editingTxId, setEditingTxId] = useState<number | null>(null);
-  /** Monats-Gruppen in „Letzte Buchungen“ — nur aktueller Kalendermonat standardmäßig offen. */
-  const [moneyTxOpenMonths, setMoneyTxOpenMonths] = useState<Record<string, boolean>>({});
   const vermogenSnapRef = useRef({ notgroschenBalance: 0, portfolioTotalPower: 0, totalDebt: 0, immobilienWert: 0 });
   const [dailyVermogenSnapshots, setDailyVermogenSnapshots] = useState<DailyVermogenSnapshot[]>(() => readGuestDailyVermogenSnapshots());
 
@@ -1828,35 +1823,7 @@ export default function AllWin() {
   const variableCostOverviewRows = useMemo(() => latestVarCostRows(transactions), [transactions]);
   const incomeOverviewRows = useMemo(() => aggregatedIncomeRows(transactions), [transactions]);
 
-  const moneyTxMonthGroups = useMemo(() => {
-    const bucket = new Map<string, { year: number; month0: number; txs: Transaction[] }>();
-    for (const tx of transactions) {
-      const p = parseTxDateParts(tx.date);
-      if (!p) continue;
-      const key = moneyTxMonthKey(p.year, p.month0);
-      if (!bucket.has(key)) bucket.set(key, { year: p.year, month0: p.month0, txs: [] });
-      bucket.get(key)!.txs.push(tx);
-    }
-    return Array.from(bucket.values())
-      .map((g) => ({ ...g, txs: [...g.txs].sort(compareTxByDateDesc) }))
-      .sort((a, b) => b.year * 12 + b.month0 - (a.year * 12 + a.month0));
-  }, [transactions]);
-
-  useEffect(() => {
-    if (moneyTxMonthGroups.length === 0) return;
-    setMoneyTxOpenMonths((prev) => {
-      const next = { ...prev };
-      let changed = false;
-      moneyTxMonthGroups.forEach((g, i) => {
-        const key = moneyTxMonthKey(g.year, g.month0);
-        if (!(key in next)) {
-          next[key] = i === 0;
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [moneyTxMonthGroups]);
+  const recentMoneyTxList = useMemo(() => [...transactions].sort(compareTxByDateDesc), [transactions]);
   const variableCostOverviewSum = useMemo(
     () =>
       variableCostOverviewRows.reduce((s, t) => {
@@ -3632,6 +3599,7 @@ export default function AllWin() {
         linkedDebtId: cat === 'Kreditrate' ? f.linkedDebtId : '',
       }));
       setMoneyFormOpen(true);
+      scrollToMoneyForm();
       const conf =
         s.confidence === 'high' ? 'sicher' : s.confidence === 'low' ? 'unsicher — bitte prüfen' : 'plausibel';
       showToast(`Kassenzettel erkannt (${conf}). Daten prüfen und speichern.`, s.confidence === 'low' ? 'error' : 'success');
@@ -3669,6 +3637,12 @@ export default function AllWin() {
     showToast(ok ? 'Buchung gelöscht.' : 'Lokal gelöscht — Cloud-Sync fehlgeschlagen. Bitte erneut versuchen.', ok ? 'success' : 'error');
   };
 
+  const scrollToMoneyForm = useCallback(() => {
+    requestAnimationFrame(() => {
+      moneyFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
+
   const startEditTx = (tx: Transaction) => {
     setEditingTxId(tx.id);
     setMoneyFormOpen(true);
@@ -3688,7 +3662,8 @@ export default function AllWin() {
       feeStr: typeof tx.feeEur === 'number' && tx.feeEur > 0 ? String(tx.feeEur).replace('.', ',') : '',
       taxStr: typeof tx.taxEur === 'number' && tx.taxEur > 0 ? String(tx.taxEur).replace('.', ',') : '',
     });
-    showToast('Buchung geladen — unten anpassen und speichern.', 'success');
+    scrollToMoneyForm();
+    showToast('Buchung geladen — anpassen und speichern.', 'success');
   };
 
   const addTx = () => {
@@ -5644,52 +5619,16 @@ export default function AllWin() {
           </div>
         )}
         {moneyTxListExpanded && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {moneyTxMonthGroups.map((group) => {
-              const key = moneyTxMonthKey(group.year, group.month0);
-              const open = moneyTxOpenMonths[key] ?? false;
-              return (
-                <div
-                  key={key}
-                  style={{
-                    borderRadius: 10,
-                    border: `1px solid ${awBg.line}`,
-                    background: awBg.hole,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <button
-                    type="button"
-                    aria-expanded={open}
-                    onClick={() => setMoneyTxOpenMonths((prev) => ({ ...prev, [key]: !open }))}
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 10,
-                      padding: '10px 12px',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                    }}
-                  >
-                    <span style={{ fontSize: 12, fontWeight: 800, color: '#e6edf3', letterSpacing: '0.06em' }}>
-                      {moneyTxMonthLabel(group.year, group.month0)}
-                    </span>
-                    <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700 }}>
-                      {group.txs.length} {open ? '▼' : '▶'}
-                    </span>
-                  </button>
-                  {open ? (
-                    <div style={{ padding: '0 10px 8px' }}>{group.txs.map((tx) => renderMoneyTxRow(tx))}</div>
-                  ) : (
-                    <div style={{ fontSize: 11, color: '#7d8590', padding: '0 12px 10px' }}>Zugeklappt — antippen zum Anzeigen.</div>
-                  )}
-                </div>
-              );
-            })}
+          <div
+            style={{
+              maxHeight: MONEY_RECENT_TX_VISIBLE * MONEY_RECENT_TX_ROW_PX,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              WebkitOverflowScrolling: 'touch',
+              paddingRight: 2,
+            }}
+          >
+            {recentMoneyTxList.map((tx) => renderMoneyTxRow(tx))}
           </div>
         )}
       </div>
@@ -5851,7 +5790,6 @@ export default function AllWin() {
           )}
         </div>
       </div>
-      {renderMoneyRecentTxList()}
       <input
         ref={receiptCameraInputRef}
         type="file"
@@ -5927,7 +5865,7 @@ export default function AllWin() {
           Das Foto wird nicht in der App gespeichert — nur die Buchung nach deiner Bestätigung.
         </div>
       </div>
-      <div data-tour="money-form" style={S.card}>
+      <div data-tour="money-form" ref={moneyFormRef} style={{ ...S.card, scrollMarginTop: 12 }}>
         <button
           type="button"
           aria-expanded={moneyFormOpen}
@@ -6254,6 +6192,8 @@ export default function AllWin() {
         </>
         )}
       </div>
+
+      {renderMoneyRecentTxList()}
 
       <div style={{ ...S.card, border: `1px solid ${awBg.line}`, background: awBg.hole }}>
         <button
