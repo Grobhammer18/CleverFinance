@@ -5967,7 +5967,10 @@ export default function AllWin() {
 
   const renderTransactions = () => (
     <div style={{ ...S.section, scrollMarginBottom: 160 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginTop: 16, marginBottom: 16, minHeight: 36 }}>
+      <div
+        data-tour="money-options"
+        style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginTop: 16, marginBottom: 16, minHeight: 36 }}
+      >
         <div ref={moneyOverflowRef} style={{ position: 'relative', zIndex: 5 }}>
           <button
             type="button"
@@ -6140,7 +6143,7 @@ export default function AllWin() {
         tabIndex={-1}
         onChange={onReceiptFilePicked}
       />
-      <div style={{ ...S.card, marginBottom: 10 }}>
+      <div data-tour="money-receipt" style={{ ...S.card, marginBottom: 10 }}>
         <div style={S.label}>{tr('money.receiptScan')}</div>
         <div style={{ fontSize: 11, color: '#8b949e', marginTop: 4, marginBottom: 10, lineHeight: 1.45 }}>
           {tr('common.receiptScanHint')}
@@ -7832,7 +7835,7 @@ export default function AllWin() {
           </div>
         </div>
       )}
-    <div data-tour="profile-main" style={S.section}>
+    <div style={S.section}>
       <div style={{ ...S.card, border: '1px solid #7c3aed55', marginTop: 6 }}>
         <div style={{ ...S.row }}>
           <div>
@@ -7860,7 +7863,7 @@ export default function AllWin() {
         {profileSection === 'subscription' && renderProfileSubPanel('subscription')}
       </div>
 
-      <div style={S.card}>
+      <div data-tour="profile-settings" style={S.card}>
         {(
           [
             ['language', translate('profile.language', locale)],
@@ -7921,7 +7924,7 @@ export default function AllWin() {
         ))}
       </div>
 
-      <div style={S.card}>
+      <div data-tour="profile-tour" style={S.card}>
         <div style={S.label}>{tr('profile.onboardingSection')}</div>
         <div style={{ fontSize: 12, color: '#7d8590', marginTop: 6, lineHeight: 1.5 }}>
           {tr('profile.onboardingHint')}

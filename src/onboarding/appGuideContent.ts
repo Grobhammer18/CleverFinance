@@ -18,7 +18,7 @@ const DE_STEPS: AppTourStep[] = [
     id: 'welcome',
     title: 'Willkommen bei Clever Finance! 🎉',
     message:
-      'Kurz die wichtigsten Stellen — mit Licht und Sprechblase. Du kannst jederzeit überspringen oder später unter Mehr die Tour erneut starten.',
+      'Kurz die wichtigsten Stellen — mit Licht und Sprechblase. Neu dabei: Kassenzettel-Scan, Sprache & Währung, Urlaubsmodus und Einstellungen, die direkt aufklappen. Du kannst jederzeit überspringen oder die Tour später unter Mehr erneut starten.',
   },
   {
     id: 'nav',
@@ -26,7 +26,7 @@ const DE_STEPS: AppTourStep[] = [
     target: 'tab-bar',
     title: 'Deine Navigation',
     message:
-      'Unten wechselst du zwischen den Bereichen. Alles ist miteinander verknüpft: Buchungen in Money wirken sich auf Home und LevelUp aus.',
+      'Unten wechselst du zwischen Home, Money, Übersicht, Boost, LevelUp und Mehr. Alles ist verknüpft: Buchungen in Money wirken sich auf Home, Übersicht und LevelUp aus.',
   },
   {
     id: 'home-saldo',
@@ -34,7 +34,7 @@ const DE_STEPS: AppTourStep[] = [
     target: 'home-saldo',
     title: 'Home — Monat im Blick',
     message:
-      'Hier siehst du Einnahmen, Ausgaben und den Monatssaldo. Die Zahlen kommen aus deinen Buchungen unter Money — nichts doppelt eintragen.',
+      'Einnahmen, Ausgaben und Monatssaldo auf einen Blick. Die Zahlen kommen aus deinen Buchungen unter Money — nichts doppelt eintragen.',
   },
   {
     id: 'home-notgroschen',
@@ -51,14 +51,31 @@ const DE_STEPS: AppTourStep[] = [
     title: 'Portfolio Power (Kurzüberblick)',
     message:
       'Gesamt = investierte Positionen + Cash Depot. Details, Orders und Live-Kurse findest du unter LevelUp.',
+    requiresLevelUpUnlocked: true,
+  },
+  {
+    id: 'money-receipt',
+    tab: 'transactions',
+    target: 'money-receipt',
+    title: 'Kassenzettel-Scan',
+    message:
+      'Beleg fotografieren oder aus der Mediathek wählen — Betrag, Datum und Händler werden erkannt und ins Buchungsformular übernommen. Dafür musst du eingeloggt sein.',
+  },
+  {
+    id: 'money-options',
+    tab: 'transactions',
+    target: 'money-options',
+    title: 'Money — Menü ⋮',
+    message:
+      'Oben rechts: neue Schuld anlegen (öffnet Boost), Grundwährung wählen und „Im Urlaub“ aktivieren — dann buchst du in Fremdwährung, umgerechnet in deine Heimatwährung.',
   },
   {
     id: 'money',
     tab: 'transactions',
     target: 'money-form',
-    title: 'Money — Buchungen',
+    title: 'Money — Buchung erfassen',
     message:
-      'Einnahmen und Ausgaben erfassen. Tipp: Kategorie „Dividende“ bucht automatisch auf dein Cash Depot. Kreditrate kannst du einer Schuld aus Boost zuordnen.',
+      '„Neue Buchung“ aufklappen und Einnahme oder Ausgabe wählen. Tipp: Kategorie „Dividende“ bucht automatisch auf dein Cash Depot. Kreditrate einer Schuld aus Boost zuordnen. Unter „Letzte Buchungen“ Einträge antippen — das Formular scrollt zum Bearbeiten.',
   },
   {
     id: 'charts',
@@ -66,7 +83,7 @@ const DE_STEPS: AppTourStep[] = [
     target: 'charts-main',
     title: 'Übersicht — Charts',
     message:
-      'Jahres-Charts, Vermögensverlauf und Portfolio-Entwicklung. Ideal, um Trends über Monate zu sehen.',
+      'Jahres-Charts, Vermögensverlauf und Portfolio-Entwicklung. Ideal, um Trends über Monate zu sehen und dein Gesamtbild zu prüfen.',
   },
   {
     id: 'boost',
@@ -86,16 +103,26 @@ const DE_STEPS: AppTourStep[] = [
     requiresLevelUpUnlocked: true,
   },
   {
-    id: 'profile',
+    id: 'profile-settings',
     tab: 'profile',
-    target: 'profile-main',
-    title: 'Mehr — Profil & Abo',
-    message: 'Profil, Abo, Benachrichtigungen und Einstellungen. Hier kannst du auch die App-Tour erneut starten.',
+    target: 'profile-settings',
+    title: 'Mehr — Einstellungen',
+    message:
+      'Sprache, Persönliches, Benachrichtigungen, Feedback und Orden klappst du direkt hier auf — kein Scrollen bis ganz unten. Dein Paket erreichst du oben über ›.',
+  },
+  {
+    id: 'profile-tour',
+    tab: 'profile',
+    target: 'profile-tour',
+    title: 'Tour & Onboarding',
+    message:
+      'Onboarding jederzeit neu starten oder diese App-Tour erneut ansehen — praktisch nach Updates oder wenn jemand anderes die App ausprobiert.',
   },
   {
     id: 'done',
     title: 'Du bist startklar! 🚀',
-    message: 'Viel Erfolg — leg los mit deiner ersten Buchung unter Money oder schau dir LevelUp an. Bei Fragen einfach die Tour nochmal ansehen.',
+    message:
+      'Viel Erfolg — leg los mit einem Kassenzettel-Scan oder deiner ersten Buchung unter Money. Bei Fragen einfach die Tour unter Mehr nochmal ansehen.',
   },
 ];
 
@@ -104,7 +131,7 @@ const EN_STEPS: AppTourStep[] = [
     id: 'welcome',
     title: 'Welcome to Clever Finance! 🎉',
     message:
-      'A quick look at the key spots — with spotlight and tooltip. You can skip anytime or restart the tour later under More.',
+      'A quick look at the key spots — with spotlight and tooltip. New: receipt scan, language & currency, vacation mode, and settings that expand in place. Skip anytime or restart the tour later under More.',
   },
   {
     id: 'nav',
@@ -112,7 +139,7 @@ const EN_STEPS: AppTourStep[] = [
     target: 'tab-bar',
     title: 'Your navigation',
     message:
-      'Switch areas at the bottom. Everything is connected: Money entries affect Home and LevelUp.',
+      'Switch between Home, Money, Overview, Boost, LevelUp and More at the bottom. Everything is connected: Money entries affect Home, Overview and LevelUp.',
   },
   {
     id: 'home-saldo',
@@ -137,14 +164,31 @@ const EN_STEPS: AppTourStep[] = [
     title: 'Portfolio Power (quick view)',
     message:
       'Total = invested positions + cash depot. Details, orders and live prices are under LevelUp.',
+    requiresLevelUpUnlocked: true,
+  },
+  {
+    id: 'money-receipt',
+    tab: 'transactions',
+    target: 'money-receipt',
+    title: 'Receipt scan',
+    message:
+      'Take a photo or pick from your library — amount, date and merchant are recognized and filled into the booking form. You need to be logged in.',
+  },
+  {
+    id: 'money-options',
+    tab: 'transactions',
+    target: 'money-options',
+    title: 'Money — menu ⋮',
+    message:
+      'Top right: add a new debt (opens Boost), pick your base currency, and enable "On vacation" — then book in foreign currency, converted to your home currency.',
   },
   {
     id: 'money',
     tab: 'transactions',
     target: 'money-form',
-    title: 'Money — entries',
+    title: 'Money — add an entry',
     message:
-      'Record income and expenses. Tip: category "Dividend" books to your cash depot automatically. Loan payments can link to a Boost debt.',
+      'Expand "New booking" and choose income or expense. Tip: category "Dividend" books to your cash depot automatically. Link loan payments to a Boost debt. Under "Recent bookings", tap an entry — the form scrolls into view for editing.',
   },
   {
     id: 'charts',
@@ -152,7 +196,7 @@ const EN_STEPS: AppTourStep[] = [
     target: 'charts-main',
     title: 'Overview — charts',
     message:
-      'Year charts, wealth history and portfolio development. Ideal for spotting trends over months.',
+      'Year charts, wealth history and portfolio development. Ideal for spotting trends over months and checking the big picture.',
   },
   {
     id: 'boost',
@@ -172,16 +216,26 @@ const EN_STEPS: AppTourStep[] = [
     requiresLevelUpUnlocked: true,
   },
   {
-    id: 'profile',
+    id: 'profile-settings',
     tab: 'profile',
-    target: 'profile-main',
-    title: 'More — profile & plan',
-    message: 'Profile, subscription, notifications and settings. You can restart the app tour here too.',
+    target: 'profile-settings',
+    title: 'More — settings',
+    message:
+      'Language, personal info, notifications, feedback and badges expand right here — no scrolling to the bottom. Your plan is at the top via ›.',
+  },
+  {
+    id: 'profile-tour',
+    tab: 'profile',
+    target: 'profile-tour',
+    title: 'Tour & onboarding',
+    message:
+      'Restart onboarding anytime or run this app tour again — handy after updates or when someone else tries the app.',
   },
   {
     id: 'done',
     title: 'You\'re all set! 🚀',
-    message: 'Good luck — start with your first Money entry or explore LevelUp. Questions? Just run the tour again.',
+    message:
+      'Good luck — start with a receipt scan or your first Money entry. Questions? Run the tour again anytime under More.',
   },
 ];
 
