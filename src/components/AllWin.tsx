@@ -5966,8 +5966,8 @@ export default function AllWin() {
   };
 
   const renderTransactions = () => (
-    <div style={{ ...S.section, scrollMarginBottom: 160, paddingTop: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginTop: 20, marginBottom: 12, minHeight: 36 }}>
+    <div style={{ ...S.section, scrollMarginBottom: 160 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginTop: 16, marginBottom: 16, minHeight: 36 }}>
         <div ref={moneyOverflowRef} style={{ position: 'relative', zIndex: 5 }}>
           <button
             type="button"
