@@ -1652,7 +1652,7 @@ export default function AllWin() {
   const [profileNameDraft, setProfileNameDraft] = useState('');
   const [profileGender, setProfileGender] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
-  const [legalSheet, setLegalSheet] = useState<null | 'impressum' | 'rechtlich' | 'disclaimer'>(null);
+  const [legalSheet, setLegalSheet] = useState<null | 'impressum' | 'datenschutz' | 'rechtlich' | 'disclaimer'>(null);
   const [profileSection, setProfileSection] = useState<
     'overview' | 'subscription' | 'personal' | 'notifications' | 'feedback' | 'redeem' | 'orden' | 'language'
   >('overview');
@@ -7807,6 +7807,7 @@ export default function AllWin() {
             <div style={{ ...S.row, marginBottom: 10 }}>
               <div style={{ fontSize: 17, fontWeight: 800 }}>
                 {legalSheet === 'impressum' && tr('profile.legalImpressumTitle')}
+                {legalSheet === 'datenschutz' && tr('profile.legalPrivacyTitle')}
                 {legalSheet === 'rechtlich' && tr('profile.legalLegalTitle')}
                 {legalSheet === 'disclaimer' && tr('profile.legalDisclaimerTitle')}
               </div>
@@ -7819,6 +7820,14 @@ export default function AllWin() {
                 <p style={{ marginBottom: 10 }}>{tr('profile.legalImpressumP1')}</p>
                 <p style={{ marginBottom: 10 }}>{tr('profile.legalImpressumP2')}</p>
                 <p style={{ fontSize: 12, color: '#7d8590' }}>{tr('profile.legalImpressumP3')}</p>
+              </div>
+            )}
+            {legalSheet === 'datenschutz' && (
+              <div style={{ fontSize: 13, color: '#c9d1d9', lineHeight: 1.55 }}>
+                <p style={{ marginBottom: 10 }}>{tr('profile.legalPrivacyP1')}</p>
+                <p style={{ marginBottom: 10 }}>{tr('profile.legalPrivacyP2')}</p>
+                <p style={{ marginBottom: 10 }}>{tr('profile.legalPrivacyP3')}</p>
+                <p style={{ fontSize: 12, color: '#7d8590' }}>{tr('profile.legalPrivacyP4')}</p>
               </div>
             )}
             {legalSheet === 'rechtlich' && (
@@ -7910,6 +7919,7 @@ export default function AllWin() {
         {(
           [
             ['impressum', tr('profile.impressumBtn')],
+            ['datenschutz', tr('profile.privacyBtn')],
             ['rechtlich', tr('profile.legalBtn')],
             ['disclaimer', tr('profile.disclaimerBtn')],
           ] as const
