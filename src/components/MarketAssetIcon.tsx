@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { allwinPalette } from '../theme/allwinPalette';
 
 export type MarketAssetLogoFields = {
   icon: string;
@@ -17,7 +16,7 @@ type Props = {
 
 /**
  * CDN-Logo wenn `logoUrl` gesetzt und ladbar — sonst Fallback-Zeichen.
- * Dunkler Kachel-Hintergrund (weiße Marken-Logos wie Apple bleiben sichtbar).
+ * Transparenter Hintergrund — Logos sitzen direkt auf der Kartenfläche.
  */
 export default function MarketAssetIcon({ item, size, borderRadius, style }: Props) {
   const candidates = useMemo(() => {
@@ -73,7 +72,7 @@ export default function MarketAssetIcon({ item, size, borderRadius, style }: Pro
           objectPosition: 'center',
           padding: pad,
           boxSizing: 'border-box',
-          background: allwinPalette.hole,
+          background: 'transparent',
           flexShrink: 0,
           ...style,
         }}
@@ -87,7 +86,7 @@ export default function MarketAssetIcon({ item, size, borderRadius, style }: Pro
         width: size,
         height: size,
         borderRadius: br,
-        background: allwinPalette.hole,
+        background: 'transparent',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
