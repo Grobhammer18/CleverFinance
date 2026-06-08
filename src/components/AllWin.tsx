@@ -5281,22 +5281,24 @@ export default function AllWin() {
           >
             {tr('home.editInMoney')}
           </button>
-          <button
-            type="button"
-            onClick={restartOnboarding}
-            style={{
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              fontSize: 12,
-              color: '#5b93ff',
-              textDecoration: 'underline',
-              textUnderlineOffset: 3,
-            }}
-          >
-            {tr('home.restartOnboarding')}
-          </button>
+          {PUBLIC_BETA && (
+            <button
+              type="button"
+              onClick={restartOnboarding}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                fontSize: 12,
+                color: '#5b93ff',
+                textDecoration: 'underline',
+                textUnderlineOffset: 3,
+              }}
+            >
+              {tr('home.restartOnboarding')}
+            </button>
+          )}
         </div>
       </div>
 
@@ -7925,14 +7927,24 @@ export default function AllWin() {
       </div>
 
       <div data-tour="profile-tour" style={S.card}>
-        <div style={S.label}>{tr('profile.onboardingSection')}</div>
+        <div style={S.label}>{tr(PUBLIC_BETA ? 'profile.onboardingSection' : 'profile.tourSection')}</div>
         <div style={{ fontSize: 12, color: '#7d8590', marginTop: 6, lineHeight: 1.5 }}>
-          {tr('profile.onboardingHint')}
+          {tr(PUBLIC_BETA ? 'profile.onboardingHint' : 'profile.tourHint')}
         </div>
-        <button type="button" style={{ ...S.btn(awBg.mutedBtn), marginTop: 12 }} onClick={restartOnboarding}>
-          {tr('profile.restartOnboarding')}
-        </button>
-        <button type="button" style={{ ...S.btn('#1f3a5f'), marginTop: 8, border: '1px solid #58a6ff66' }} onClick={startAppTour}>
+        {PUBLIC_BETA && (
+          <button type="button" style={{ ...S.btn(awBg.mutedBtn), marginTop: 12 }} onClick={restartOnboarding}>
+            {tr('profile.restartOnboarding')}
+          </button>
+        )}
+        <button
+          type="button"
+          style={{
+            ...S.btn('#1f3a5f'),
+            marginTop: PUBLIC_BETA ? 8 : 12,
+            border: '1px solid #58a6ff66',
+          }}
+          onClick={startAppTour}
+        >
           {tr('profile.appTour')}
         </button>
       </div>

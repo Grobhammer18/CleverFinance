@@ -114,9 +114,9 @@ const DE_STEPS: AppTourStep[] = [
     id: 'profile-tour',
     tab: 'profile',
     target: 'profile-tour',
-    title: 'Tour & Onboarding',
+    title: 'App-Tour',
     message:
-      'Onboarding jederzeit neu starten oder diese App-Tour erneut ansehen — praktisch nach Updates oder wenn jemand anderes die App ausprobiert.',
+      'Die geführte Tour mit Licht und Sprechblase jederzeit erneut starten — praktisch nach Updates oder wenn du eine Funktion nochmal erklärt haben möchtest.',
   },
   {
     id: 'done',
@@ -227,9 +227,9 @@ const EN_STEPS: AppTourStep[] = [
     id: 'profile-tour',
     tab: 'profile',
     target: 'profile-tour',
-    title: 'Tour & onboarding',
+    title: 'App tour',
     message:
-      'Restart onboarding anytime or run this app tour again — handy after updates or when someone else tries the app.',
+      'Restart the guided tour with spotlight and tooltip anytime — handy after updates or when you want a feature explained again.',
   },
   {
     id: 'done',
