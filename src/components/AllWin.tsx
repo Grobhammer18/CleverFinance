@@ -5677,9 +5677,297 @@ export default function AllWin() {
       </div>
     ) : null;
 
+  const toggleProfileSection = (id: typeof profileSection) => {
+    setProfileSection((prev) => (prev === id ? 'overview' : id));
+  };
+
+  const profileAccordionPanelStyle: CSSProperties = {
+    paddingTop: 12,
+    marginTop: 2,
+    borderTop: `1px solid ${awBg.cardBorder}`,
+  };
+
+  const renderProfileSubPanel = (section: Exclude<typeof profileSection, 'overview'>) => {
+    switch (section) {
+      case 'subscription':
+        return (
+          <div style={profileAccordionPanelStyle}>
+            {PUBLIC_BETA && (
+              <div style={{ ...S.card, border: '1px solid #58a6ff66', background: '#121820', marginBottom: 10 }}>
+                <div style={S.label}>{tr('profile.publicBeta')}</div>
+                <div style={{ fontSize: 13, color: '#c9d1d9', marginTop: 8, lineHeight: 1.55 }}>
+                  {tr('profile.publicBetaBody')}
+                </div>
+              </div>
+            )}
+            {!PUBLIC_BETA && (
+              <div style={{ ...S.card, marginBottom: 10 }}>
+                <div style={S.label}>{tr('profile.billingCycle')}</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button style={{ ...S.chip(sub.cycle === 'monthly'), flex: 1, padding: '10px 8px' }} onClick={() => setSub((prev) => ({ ...prev, cycle: 'monthly' }))}>
+                    {tr('profile.monthly')}
+                  </button>
+                  <button style={{ ...S.chip(sub.cycle === 'yearly'), flex: 1, padding: '10px 8px' }} onClick={() => setSub((prev) => ({ ...prev, cycle: 'yearly' }))}>
+                    {tr('profile.yearly')}
+                  </button>
+                </div>
+              </div>
+            )}
+            {!PUBLIC_BETA &&
+              (Object.keys(PRICING) as SubscriptionTier[]).map((tier) => {
+                const plan = PRICING[tier];
+                const active = tier === subEffective.tier;
+                return (
+                  <div key={tier} style={{ ...S.card, border: active ? '1px solid #2563eb88' : `1px solid ${awBg.cardBorder}`, marginBottom: 10 }}>
+                    <div style={{ ...S.row, marginBottom: 8 }}>
+                      <div style={{ fontSize: 18, fontWeight: 800 }}>{plan.name}</div>
+                      <div style={{ fontWeight: 700, color: tier === 'free' ? '#7d8590' : '#2563eb' }}>
+                        {plan[sub.cycle].toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10 }}>{sub.cycle === 'monthly' ? tr('profile.perMonth') : tr('profile.perYear')}</div>
+                    <div style={{ fontSize: 12, marginBottom: 10 }}>
+                      {plan.features.map((f) => (
+                        <div key={f} style={{ marginBottom: 4 }}>
+                          ✅ {tr(`pricing.features.${f}`)}
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      style={S.btn(active ? awBg.mutedBtn : '#2563eb')}
+                      onClick={() => void changePlan(tier)}
+                      disabled={active || upgradeLoading}
+                    >
+                      {active
+                        ? tr('profile.currentPlan')
+                        : tier === 'free'
+                          ? tr('profile.cancelPlan', { name: PRICING.free.name })
+                          : upgradeLoading
+                            ? tr('profile.redirecting')
+                            : tr('profile.upgradeTo', { name: plan.name })}
+                    </button>
+                  </div>
+                );
+              })}
+            {PUBLIC_BETA && (
+              <div style={S.card}>
+                <div style={S.label}>{tr('profile.betaAccess')}</div>
+                <div style={{ fontSize: 13, color: '#7d8590', marginTop: 8, lineHeight: 1.5 }}>
+                  {tr('profile.betaAccessBody')}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      case 'language':
+        return (
+          <div style={profileAccordionPanelStyle}>
+            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 12, lineHeight: 1.45 }}>
+              {translate('language.settingsHint', locale)}
+            </div>
+            {APP_LOCALES.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                style={{
+                  ...S.row,
+                  width: '100%',
+                  background: locale === opt.id ? '#2563eb22' : 'transparent',
+                  border: `1px solid ${locale === opt.id ? '#2563eb' : awBg.line}`,
+                  borderRadius: 10,
+                  color: '#e6edf3',
+                  padding: '12px 14px',
+                  cursor: 'pointer',
+                  marginBottom: 8,
+                }}
+                onClick={() => applyLocale(opt.id)}
+              >
+                <span style={{ fontWeight: 700 }}>{opt.native}</span>
+                <span>{locale === opt.id ? '✅' : '›'}</span>
+              </button>
+            ))}
+          </div>
+        );
+      case 'personal':
+        return (
+          <div style={profileAccordionPanelStyle}>
+            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 8 }}>{tr('profile.email', { email: authUser?.email || '' })}</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                style={{ ...S.input, padding: '10px 12px', fontSize: 14 }}
+                placeholder={tr('profile.username')}
+                value={profileNameDraft}
+                onChange={(e) => setProfileNameDraft(e.target.value)}
+              />
+              <button style={{ ...S.chip(true), padding: '8px 12px' }} onClick={() => void saveProfileName()} disabled={profileSaving}>
+                {profileSaving ? '...' : '💾'}
+              </button>
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 6 }}>{tr('profile.gender')}</div>
+              <select style={S.select} value={profileGender} onChange={(e) => setProfileGender(e.target.value)}>
+                <option value="">{tr('profile.genderNone')}</option>
+                <option value="m">{tr('profile.genderM')}</option>
+                <option value="w">{tr('profile.genderF')}</option>
+                <option value="d">{tr('profile.genderD')}</option>
+              </select>
+            </div>
+          </div>
+        );
+      case 'feedback':
+        return (
+          <div style={profileAccordionPanelStyle}>
+            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 14, lineHeight: 1.5 }}>{tr('profile.feedbackHint')}</div>
+            <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>{tr('profile.feedbackCategory')}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 8, marginBottom: 14 }}>
+              {(
+                [
+                  ['bug', tr('profile.feedbackBug')],
+                  ['improve', tr('profile.feedbackImprove')],
+                  ['feature', tr('profile.feedbackFeature')],
+                  ['other', tr('profile.feedbackOther')],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  style={{
+                    ...S.chip(feedbackKind === id),
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    flex: '1 1 auto',
+                    minWidth: 'calc(50% - 4px)',
+                  }}
+                  onClick={() => setFeedbackKind(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>{tr('profile.feedbackMessage')}</div>
+            <textarea
+              style={{
+                ...S.input,
+                width: '100%',
+                minHeight: 120,
+                resize: 'vertical' as const,
+                lineHeight: 1.45,
+                fontFamily: 'inherit',
+              }}
+              placeholder={tr('profile.feedbackPlaceholder')}
+              value={feedbackMessage}
+              onChange={(e) => setFeedbackMessage(e.target.value)}
+              maxLength={8000}
+            />
+            <div style={{ fontSize: 11, color: '#6e7681', marginTop: 6, textAlign: 'right' as const }}>
+              {feedbackMessage.trim().length} / 8000
+            </div>
+            <button
+              type="button"
+              style={{ ...S.btn('#2563eb'), marginTop: 12, opacity: feedbackSending ? 0.7 : 1 }}
+              onClick={() => void submitFeedback()}
+              disabled={feedbackSending}
+            >
+              {feedbackSending ? tr('profile.feedbackSending') : tr('profile.feedbackSend')}
+            </button>
+          </div>
+        );
+      case 'notifications':
+        return (
+          <div style={profileAccordionPanelStyle}>
+            {(
+              [
+                ['suspiciousCharges', tr('profile.notifSuspicious')],
+                ['subscriptionChanges', tr('profile.notifSubscription')],
+                ['weeklySummary', tr('profile.notifWeekly')],
+              ] as const
+            ).map(([k, label]) => (
+              <button
+                key={k}
+                style={{ ...S.row, width: '100%', background: 'transparent', border: 'none', color: '#e6edf3', padding: '12px 0', cursor: 'pointer' }}
+                onClick={() => setNotifSettings((prev) => ({ ...prev, [k]: !prev[k] }))}
+              >
+                <span>{label}</span>
+                <span>{notifSettings[k] ? '✅' : '⬜'}</span>
+              </button>
+            ))}
+          </div>
+        );
+      case 'orden':
+        return (
+          <div style={profileAccordionPanelStyle}>
+            <div style={{ ...S.row, marginBottom: 10, alignItems: 'flex-start' }}>
+              <div style={{ fontSize: 12, color: '#7d8590', lineHeight: 1.5, flex: 1 }}>{tr('profile.ordenHint')}</div>
+              <div
+                style={{
+                  flexShrink: 0,
+                  fontSize: 12,
+                  fontWeight: 800,
+                  padding: '6px 10px',
+                  borderRadius: 8,
+                  background: '#21262d',
+                  color: '#a855f7',
+                  border: `1px solid ${awBg.line}`,
+                }}
+              >
+                {earnedOrdenPresetIds.length}/{ORDEN_CATALOG.length}
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {ORDEN_CATALOG.map((orden) => {
+                const unlocked = earnedOrdenPresetIds.includes(orden.presetId);
+                return (
+                  <div
+                    key={orden.presetId}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '12px 10px',
+                      borderRadius: 12,
+                      border: unlocked ? '1px solid rgba(168, 85, 247, 0.45)' : `1px solid ${awBg.cardBorder}`,
+                      background: unlocked ? 'linear-gradient(135deg, rgba(168,85,247,0.12) 0%, rgba(12,17,35,0.95) 100%)' : '#21262d',
+                    }}
+                  >
+                    <div style={{ fontSize: 30, lineHeight: 1, filter: unlocked ? 'none' : 'grayscale(0.92)', opacity: unlocked ? 1 : 0.55 }}>
+                      {orden.emoji}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: unlocked ? 800 : 600, color: unlocked ? '#e6edf3' : '#6e7681' }}>
+                        {orden.title}
+                      </div>
+                      <div style={{ fontSize: 11, color: unlocked ? '#a855f7' : '#484f58', marginTop: 4, fontWeight: 700 }}>
+                        {unlocked ? tr('profile.ordenUnlocked') : tr('profile.ordenLocked')}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      case 'redeem':
+        return (
+          <div style={profileAccordionPanelStyle}>
+            <input
+              style={S.input}
+              placeholder={tr('profile.redeemPlaceholder')}
+              value={redeemCode}
+              onChange={(e) => setRedeemCode(e.target.value)}
+            />
+            <button style={{ ...S.btn(), marginTop: 10 }} onClick={applyRedeemCode}>
+              {tr('profile.redeemBtn')}
+            </button>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   const renderTransactions = () => (
-    <div style={{ ...S.section, scrollMarginBottom: 160 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginBottom: 10, minHeight: 36 }}>
+    <div style={{ ...S.section, scrollMarginBottom: 160, paddingTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'flex-start', marginTop: 20, marginBottom: 12, minHeight: 36 }}>
         <div ref={moneyOverflowRef} style={{ position: 'relative', zIndex: 5 }}>
           <button
             type="button"
@@ -7560,10 +7848,16 @@ export default function AllWin() {
               )}
             </div>
           </div>
-          <button style={{ ...S.chip(true), fontSize: 14 }} onClick={() => setProfileSection('subscription')}>
-            ›
+          <button
+            type="button"
+            style={{ ...S.chip(profileSection === 'subscription'), fontSize: 14 }}
+            aria-expanded={profileSection === 'subscription'}
+            onClick={() => toggleProfileSection('subscription')}
+          >
+            {profileSection === 'subscription' ? '▼' : '›'}
           </button>
         </div>
+        {profileSection === 'subscription' && renderProfileSubPanel('subscription')}
       </div>
 
       <div style={S.card}>
@@ -7576,16 +7870,33 @@ export default function AllWin() {
             ['orden', translate('profile.orden', locale)],
             ['redeem', translate('profile.redeem', locale)],
           ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            style={{ ...S.row, width: '100%', background: 'transparent', border: 'none', color: '#e6edf3', padding: '14px 4px', cursor: 'pointer', borderBottom: `1px solid ${awBg.cardBorder}` }}
-            onClick={() => setProfileSection(id)}
-          >
-            <span style={{ fontSize: 20, textAlign: 'left' }}>{label}</span>
-            <span style={{ color: '#7d8590', fontSize: 22 }}>›</span>
-          </button>
-        ))}
+        ).map(([id, label], idx, arr) => {
+          const open = profileSection === id;
+          return (
+            <div key={id} style={{ borderBottom: idx < arr.length - 1 || open ? `1px solid ${awBg.cardBorder}` : 'none' }}>
+              <button
+                type="button"
+                aria-expanded={open}
+                style={{
+                  ...S.row,
+                  width: '100%',
+                  background: open ? 'rgba(37, 99, 235, 0.06)' : 'transparent',
+                  border: 'none',
+                  color: '#e6edf3',
+                  padding: '14px 4px',
+                  cursor: 'pointer',
+                }}
+                onClick={() => toggleProfileSection(id)}
+              >
+                <span style={{ fontSize: 20, textAlign: 'left' }}>{label}</span>
+                <span style={{ color: open ? '#58a6ff' : '#7d8590', fontSize: open ? 14 : 22, fontWeight: 700 }}>
+                  {open ? '▼' : '›'}
+                </span>
+              </button>
+              {open && renderProfileSubPanel(id)}
+            </div>
+          );
+        })}
       </div>
 
       <div style={S.card}>
@@ -7622,303 +7933,6 @@ export default function AllWin() {
           {tr('profile.appTour')}
         </button>
       </div>
-
-      {profileSection === 'subscription' && (
-        <>
-          {PUBLIC_BETA && (
-            <div style={{ ...S.card, border: '1px solid #58a6ff66', background: '#121820' }}>
-              <div style={S.label}>{tr('profile.publicBeta')}</div>
-              <div style={{ fontSize: 13, color: '#c9d1d9', marginTop: 8, lineHeight: 1.55 }}>
-                {tr('profile.publicBetaBody')}
-              </div>
-            </div>
-          )}
-          {!PUBLIC_BETA && (
-          <div style={S.card}>
-            <div style={S.label}>{tr('profile.billingCycle')}</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button style={{ ...S.chip(sub.cycle === 'monthly'), flex: 1, padding: '10px 8px' }} onClick={() => setSub((prev) => ({ ...prev, cycle: 'monthly' }))}>
-                {tr('profile.monthly')}
-              </button>
-              <button style={{ ...S.chip(sub.cycle === 'yearly'), flex: 1, padding: '10px 8px' }} onClick={() => setSub((prev) => ({ ...prev, cycle: 'yearly' }))}>
-                {tr('profile.yearly')}
-              </button>
-            </div>
-          </div>
-          )}
-
-          {!PUBLIC_BETA && (Object.keys(PRICING) as SubscriptionTier[]).map((tier) => {
-            const plan = PRICING[tier];
-            const active = tier === subEffective.tier;
-            return (
-              <div key={tier} style={{ ...S.card, border: active ? '1px solid #2563eb88' : `1px solid ${awBg.cardBorder}` }}>
-                <div style={{ ...S.row, marginBottom: 8 }}>
-                  <div style={{ fontSize: 18, fontWeight: 800 }}>{plan.name}</div>
-                  <div style={{ fontWeight: 700, color: tier === 'free' ? '#7d8590' : '#2563eb' }}>
-                    {plan[sub.cycle].toLocaleString('de-DE', { minimumFractionDigits: 2 })} €
-                  </div>
-                </div>
-                <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 10 }}>{sub.cycle === 'monthly' ? tr('profile.perMonth') : tr('profile.perYear')}</div>
-                <div style={{ fontSize: 12, marginBottom: 10 }}>
-                  {plan.features.map((f) => (
-                    <div key={f} style={{ marginBottom: 4 }}>
-                      ✅ {tr(`pricing.features.${f}`)}
-                    </div>
-                  ))}
-                </div>
-                <button
-                  style={S.btn(active ? awBg.mutedBtn : '#2563eb')}
-                  onClick={() => void changePlan(tier)}
-                  disabled={active || upgradeLoading}
-                >
-                  {active
-                    ? tr('profile.currentPlan')
-                    : tier === 'free'
-                      ? tr('profile.cancelPlan', { name: PRICING.free.name })
-                      : upgradeLoading
-                        ? tr('profile.redirecting')
-                        : `🔥 ${tr('profile.upgradeTo', { name: plan.name })}`}
-                </button>
-              </div>
-            );
-          })}
-          {PUBLIC_BETA && (
-            <div style={S.card}>
-              <div style={S.label}>{tr('profile.betaAccess')}</div>
-              <div style={{ fontSize: 13, color: '#7d8590', marginTop: 8, lineHeight: 1.5 }}>
-                {tr('profile.betaAccessBody')}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {profileSection === 'language' && (
-        <div style={S.card}>
-          <button
-            type="button"
-            style={{ ...S.chip(false), marginBottom: 10, padding: '6px 12px' }}
-            onClick={() => setProfileSection('overview')}
-          >
-            ← {translate('common.close', locale)}
-          </button>
-          <div style={S.label}>{translate('language.settingsTitle', locale)}</div>
-          <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 12, lineHeight: 1.45 }}>
-            {translate('language.settingsHint', locale)}
-          </div>
-          {APP_LOCALES.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              style={{
-                ...S.row,
-                width: '100%',
-                background: locale === opt.id ? '#2563eb22' : 'transparent',
-                border: `1px solid ${locale === opt.id ? '#2563eb' : awBg.line}`,
-                borderRadius: 10,
-                color: '#e6edf3',
-                padding: '12px 14px',
-                cursor: 'pointer',
-                marginBottom: 8,
-              }}
-              onClick={() => applyLocale(opt.id)}
-            >
-              <span style={{ fontWeight: 700 }}>{opt.native}</span>
-              <span>{locale === opt.id ? '✅' : '›'}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {profileSection === 'personal' && (
-        <div style={S.card}>
-          <div style={S.label}>{tr('profile.personal')}</div>
-          <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 8 }}>{tr('profile.email', { email: authUser?.email || '' })}</div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              style={{ ...S.input, padding: '10px 12px', fontSize: 14 }}
-              placeholder={tr('profile.username')}
-              value={profileNameDraft}
-              onChange={(e) => setProfileNameDraft(e.target.value)}
-            />
-            <button style={{ ...S.chip(true), padding: '8px 12px' }} onClick={() => void saveProfileName()} disabled={profileSaving}>
-              {profileSaving ? '...' : '💾'}
-            </button>
-          </div>
-          <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 12, color: '#7d8590', marginBottom: 6 }}>{tr('profile.gender')}</div>
-            <select style={S.select} value={profileGender} onChange={(e) => setProfileGender(e.target.value)}>
-              <option value="">{tr('profile.genderNone')}</option>
-              <option value="m">{tr('profile.genderM')}</option>
-              <option value="w">{tr('profile.genderF')}</option>
-              <option value="d">{tr('profile.genderD')}</option>
-            </select>
-          </div>
-        </div>
-      )}
-
-      {profileSection === 'feedback' && (
-        <div style={{ ...S.card, border: '1px solid #58a6ff55' }}>
-          <div style={S.label}>{tr('profile.feedback')}</div>
-          <div style={{ fontSize: 12, color: '#7d8590', marginTop: 6, marginBottom: 14, lineHeight: 1.5 }}>
-            {tr('profile.feedbackHint')}
-          </div>
-          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>{tr('profile.feedbackCategory')}</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
-            {(
-              [
-                ['bug', tr('profile.feedbackBug')],
-                ['improve', tr('profile.feedbackImprove')],
-                ['feature', tr('profile.feedbackFeature')],
-                ['other', tr('profile.feedbackOther')],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                style={{
-                  ...S.chip(feedbackKind === id),
-                  padding: '8px 12px',
-                  fontSize: 12,
-                  flex: '1 1 auto',
-                  minWidth: 'calc(50% - 4px)',
-                }}
-                onClick={() => setFeedbackKind(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 8, fontWeight: 700 }}>{tr('profile.feedbackMessage')}</div>
-          <textarea
-            style={{
-              ...S.input,
-              width: '100%',
-              minHeight: 140,
-              resize: 'vertical' as const,
-              lineHeight: 1.45,
-              fontFamily: 'inherit',
-            }}
-            placeholder={tr('profile.feedbackPlaceholder')}
-            value={feedbackMessage}
-            onChange={(e) => setFeedbackMessage(e.target.value)}
-            maxLength={8000}
-          />
-          <div style={{ fontSize: 11, color: '#6e7681', marginTop: 6, textAlign: 'right' as const }}>
-            {feedbackMessage.trim().length} / 8000
-          </div>
-          <button
-            type="button"
-            style={{ ...S.btn('#2563eb'), marginTop: 12, opacity: feedbackSending ? 0.7 : 1 }}
-            onClick={() => void submitFeedback()}
-            disabled={feedbackSending}
-          >
-            {feedbackSending ? tr('profile.feedbackSending') : tr('profile.feedbackSend')}
-          </button>
-        </div>
-      )}
-
-      {profileSection === 'notifications' && (
-        <div style={S.card}>
-          <div style={S.label}>{tr('profile.notifSettings')}</div>
-          {[
-            ['suspiciousCharges', tr('profile.notifSuspicious')],
-            ['subscriptionChanges', tr('profile.notifSubscription')],
-            ['weeklySummary', tr('profile.notifWeekly')],
-          ].map(([k, label]) => (
-            <button
-              key={k}
-              style={{ ...S.row, width: '100%', background: 'transparent', border: 'none', color: '#e6edf3', padding: '12px 0', cursor: 'pointer' }}
-              onClick={() => setNotifSettings((prev) => ({ ...prev, [k]: !(prev as any)[k] }))}
-            >
-              <span>{label}</span>
-              <span>{(notifSettings as any)[k] ? '✅' : '⬜'}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {profileSection === 'orden' && (
-        <div style={{ ...S.card, border: '1px solid #7c3aed44' }}>
-          <div style={{ ...S.row, marginBottom: 8, alignItems: 'flex-start' }}>
-            <div>
-              <div style={S.label}>{tr('profile.orden')}</div>
-              <div style={{ fontSize: 12, color: '#7d8590', marginTop: 6, lineHeight: 1.5 }}>
-                {tr('profile.ordenHint')}
-              </div>
-            </div>
-            <div
-              style={{
-                flexShrink: 0,
-                fontSize: 12,
-                fontWeight: 800,
-                padding: '6px 10px',
-                borderRadius: 8,
-                background: '#21262d',
-                color: '#a855f7',
-                border: `1px solid ${awBg.line}`,
-              }}
-            >
-              {earnedOrdenPresetIds.length}/{ORDEN_CATALOG.length}
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {ORDEN_CATALOG.map((orden) => {
-              const unlocked = earnedOrdenPresetIds.includes(orden.presetId);
-              return (
-                <div
-                  key={orden.presetId}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    padding: '14px 12px',
-                    borderRadius: 12,
-                    border: unlocked ? '1px solid rgba(168, 85, 247, 0.45)' : `1px solid ${awBg.cardBorder}`,
-                    background: unlocked ? 'linear-gradient(135deg, rgba(168,85,247,0.12) 0%, rgba(12,17,35,0.95) 100%)' : '#21262d',
-                    boxShadow: unlocked ? '0 0 0 1px rgba(168,85,247,0.08), 0 8px 24px rgba(0,0,0,0.25)' : 'none',
-                  }}
-                >
-                  <div style={{ fontSize: 34, lineHeight: 1, filter: unlocked ? 'none' : 'grayscale(0.92)', opacity: unlocked ? 1 : 0.55 }}>
-                    {orden.emoji}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 14,
-                        fontWeight: unlocked ? 800 : 600,
-                        color: unlocked ? '#e6edf3' : '#6e7681',
-                        letterSpacing: unlocked ? -0.2 : undefined,
-                      }}
-                    >
-                      {orden.title}
-                    </div>
-                    <div style={{ fontSize: 11, color: unlocked ? '#a855f7' : '#484f58', marginTop: 4, fontWeight: 700 }}>
-                      {unlocked ? tr('profile.ordenUnlocked') : tr('profile.ordenLocked')}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {profileSection === 'redeem' && (
-        <div style={S.card}>
-          <div style={S.label}>{tr('profile.redeemTitle')}</div>
-          <input
-            style={S.input}
-            placeholder={tr('profile.redeemPlaceholder')}
-            value={redeemCode}
-            onChange={(e) => setRedeemCode(e.target.value)}
-          />
-          <button style={S.btn()} onClick={applyRedeemCode}>
-            {tr('profile.redeemBtn')}
-          </button>
-        </div>
-      )}
     </div>
     </>
   );
