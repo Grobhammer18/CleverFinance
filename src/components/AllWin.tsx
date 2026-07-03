@@ -22,6 +22,9 @@ import { getAppTourSteps, APP_TOUR_STORAGE_KEY } from '../onboarding/appGuideCon
 import AppGuideTour from './AppGuideTour';
 import CleverFinanceLogo from './CleverFinanceLogo';
 import MarketAssetIcon, { type MarketAssetLogoFields } from './MarketAssetIcon';
+import SavingsJars, { type SavingsJar } from './SavingsJars';
+import FinancialLevels from './FinancialLevels';
+import IncomeSplitter from './IncomeSplitter';
 import HomeChartsSection from './homeCharts/HomeChartsSection';
 import { MAX_DAILY_VERMOGEN_SNAPSHOTS, normalizeDailyVermogenSnapshots, inferChartTimelineEndMs, type DailyVermogenSnapshot } from './homeCharts/homeChartData';
 import { allwinPalette as awBg } from '../theme/allwinPalette';
@@ -589,6 +592,100 @@ type FormState = {
   taxStr: string;
 };
 
+/** Basisdaten für Finanzielle Stufen, Magere-Jahre-Ampel und Goldene Eier. */
+type FinanceSettings = {
+  /** Monatliche Lebenshaltungskosten (manuell, überschreibt Auto-Schätzung) */
+  monthlyExpenses?: number;
+  /** Erwartete Jahresrendite in % für die Goldene-Eier-Anzeige */
+  gooseReturnPercent?: number;
+};
+
+type ReminderType = 'salary' | 'daily' | 'savings' | 'monthly';
+
+/** Erinnerung — geprüft beim App-Öffnen (kein Server-Push). */
+type ReminderSetting = {
+  id: string;
+  type: ReminderType;
+  /** "HH:MM" — ab dieser Uhrzeit gilt die Erinnerung als fällig */
+  time: string;
+  /** Wochentage nach Date.getDay(): 0 = So … 6 = Sa */
+  days: number[];
+  active: boolean;
+};
+
+function defaultReminders(): ReminderSetting[] {
+  return [
+    { id: 'salary', type: 'salary', time: '09:00', days: [1], active: false },
+    { id: 'daily', type: 'daily', time: '20:00', days: [0, 1, 2, 3, 4, 5, 6], active: false },
+    { id: 'savings', type: 'savings', time: '10:00', days: [1], active: false },
+    { id: 'monthly', type: 'monthly', time: '18:00', days: [0], active: false },
+  ];
+}
+
+function roundMoney(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function normalizeSavingsJars(raw: unknown): SavingsJar[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SavingsJar[] = [];
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue;
+    const j = r as Partial<SavingsJar>;
+    if (typeof j.id !== 'string' || !j.id) continue;
+    const name = typeof j.name === 'string' ? j.name : '';
+    if (!name) continue;
+    const target = typeof j.target === 'number' && j.target > 0 ? roundMoney(j.target) : 0;
+    const current = typeof j.current === 'number' && j.current > 0 ? roundMoney(j.current) : 0;
+    const percentage =
+      typeof j.percentage === 'number' && j.percentage >= 0 ? Math.min(100, Math.round(j.percentage)) : 0;
+    out.push({
+      id: j.id,
+      name,
+      emoji: typeof j.emoji === 'string' && j.emoji ? j.emoji : '🫙',
+      target,
+      current,
+      percentage,
+      ...(typeof j.color === 'string' && j.color ? { color: j.color } : {}),
+    });
+  }
+  return out;
+}
+
+function normalizeFinanceSettings(raw: unknown): FinanceSettings {
+  if (!raw || typeof raw !== 'object') return {};
+  const r = raw as Partial<FinanceSettings>;
+  const out: FinanceSettings = {};
+  if (typeof r.monthlyExpenses === 'number' && r.monthlyExpenses > 0) {
+    out.monthlyExpenses = roundMoney(r.monthlyExpenses);
+  }
+  if (typeof r.gooseReturnPercent === 'number' && r.gooseReturnPercent > 0 && r.gooseReturnPercent <= 100) {
+    out.gooseReturnPercent = Math.round(r.gooseReturnPercent * 10) / 10;
+  }
+  return out;
+}
+
+function normalizeReminders(raw: unknown): ReminderSetting[] {
+  const defaults = defaultReminders();
+  if (!Array.isArray(raw)) return defaults;
+  return defaults.map((d) => {
+    const found = raw.find(
+      (r) => r && typeof r === 'object' && (r as ReminderSetting).type === d.type,
+    ) as Partial<ReminderSetting> | undefined;
+    if (!found) return d;
+    const time = typeof found.time === 'string' && /^\d{2}:\d{2}$/.test(found.time) ? found.time : d.time;
+    const days = Array.isArray(found.days)
+      ? found.days.filter((n): n is number => typeof n === 'number' && n >= 0 && n <= 6)
+      : d.days;
+    return { ...d, time, days: days.length ? days : d.days, active: found.active === true };
+  });
+}
+
+function normalizeIncomeSplitRatio(raw: unknown): number {
+  const n = typeof raw === 'number' ? Math.round(raw) : NaN;
+  return Number.isFinite(n) && n >= 10 && n <= 90 ? n : 50;
+}
+
 /** Offline-Backup pro User — überlebt Refresh, falls Cloud-Sync noch nicht fertig war. */
 type UserStateCache = {
   transactions?: Transaction[];
@@ -601,6 +698,10 @@ type UserStateCache = {
   locale?: string;
   vacationMode?: boolean;
   vacationCurrency?: string;
+  savingsJars?: SavingsJar[];
+  financeSettings?: FinanceSettings;
+  reminders?: ReminderSetting[];
+  incomeSplitRatio?: number;
   savedAt?: number;
 };
 
@@ -1664,6 +1765,9 @@ export default function AllWin() {
     subscriptionChanges: true,
     weeklySummary: true,
   });
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
+  );
   const [earnedOrdenPresetIds, setEarnedOrdenPresetIds] = useState<string[]>(() => readGuestEarnedOrdenPresetIds());
   const [redeemCode, setRedeemCode] = useState('');
   const [isHydrating, setHydrating] = useState(false);
@@ -1703,6 +1807,46 @@ export default function AllWin() {
   const [notgroschenHomeEditing, setNotgroschenHomeEditing] = useState(false);
   const [notgroschenHomeDraft, setNotgroschenHomeDraft] = useState('');
   const notgroschenHomeMenuRef = useRef<HTMLDivElement | null>(null);
+  const [savingsJars, setSavingsJars] = useState<SavingsJar[]>(() =>
+    normalizeSavingsJars(_bootCache?.savingsJars),
+  );
+  const [financeSettings, setFinanceSettings] = useState<FinanceSettings>(() =>
+    normalizeFinanceSettings(_bootCache?.financeSettings),
+  );
+  const [reminders, setReminders] = useState<ReminderSetting[]>(() =>
+    normalizeReminders(_bootCache?.reminders),
+  );
+  const [incomeSplitRatio, setIncomeSplitRatio] = useState(() =>
+    normalizeIncomeSplitRatio(_bootCache?.incomeSplitRatio),
+  );
+  const [jarCelebration, setJarCelebration] = useState<SavingsJar | null>(null);
+  /** Ø-Ausgaben der letzten 3 Kalendermonate (inkl. aktuellem) als Vorschlag für monatliche Kosten. */
+  const suggestedMonthlyExpenses = useMemo(() => {
+    const now = new Date();
+    let sum = 0;
+    let monthsWithData = 0;
+    for (let k = 0; k < 3; k++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - k, 1);
+      let monthSum = 0;
+      let has = false;
+      for (const tx of transactions) {
+        if (tx.type !== 'ausgabe') continue;
+        const ym = parseTxYearMonth(tx.date);
+        if (!ym || ym.year !== d.getFullYear() || ym.month0 !== d.getMonth()) continue;
+        const amt = Math.abs(parseFloat(String(tx.amount).replace(',', '.')));
+        if (!Number.isNaN(amt)) {
+          monthSum += amt;
+          has = true;
+        }
+      }
+      if (has) {
+        sum += monthSum;
+        monthsWithData++;
+      }
+    }
+    return monthsWithData > 0 ? roundMoney(sum / monthsWithData) : 0;
+  }, [transactions]);
+  const effectiveMonthlyExpenses = financeSettings.monthlyExpenses ?? suggestedMonthlyExpenses;
   const [portfolioCashMenuOpen, setPortfolioCashMenuOpen] = useState(false);
   const [portfolioCashEditing, setPortfolioCashEditing] = useState(false);
   const [portfolioCashDraft, setPortfolioCashDraft] = useState('');
@@ -2342,6 +2486,18 @@ export default function AllWin() {
           loadedBaseCurrency,
           (state as { vacationCurrency?: unknown }).vacationCurrency ?? cached?.vacationCurrency,
         );
+        const loadedSavingsJars = normalizeSavingsJars(
+          (state as { savingsJars?: unknown }).savingsJars ?? cached?.savingsJars,
+        );
+        const loadedFinanceSettings = normalizeFinanceSettings(
+          (state as { financeSettings?: unknown }).financeSettings ?? cached?.financeSettings,
+        );
+        const loadedReminders = normalizeReminders(
+          (state as { reminders?: unknown }).reminders ?? cached?.reminders,
+        );
+        const loadedSplitRatio = normalizeIncomeSplitRatio(
+          (state as { incomeSplitRatio?: unknown }).incomeSplitRatio ?? cached?.incomeSplitRatio,
+        );
         flushSync(() => {
           setOnboardingV2(v2);
           setLevelUpMode(resolvedMode);
@@ -2363,6 +2519,10 @@ export default function AllWin() {
           setDailyVermogenSnapshots(dailySnaps);
           setProfileGender(genderLoad);
           setEarnedOrdenPresetIds(ordenLoad);
+          setSavingsJars(loadedSavingsJars);
+          setFinanceSettings(loadedFinanceSettings);
+          setReminders(loadedReminders);
+          setIncomeSplitRatio(loadedSplitRatio);
         });
         writeUserStateCache(authUser.id, {
           transactions: transactionsToApply,
@@ -2375,6 +2535,10 @@ export default function AllWin() {
           locale: loadedLocale,
           vacationMode: loadedVacationMode,
           vacationCurrency: loadedVacationCurrency,
+          savingsJars: loadedSavingsJars,
+          financeSettings: loadedFinanceSettings,
+          reminders: loadedReminders,
+          incomeSplitRatio: loadedSplitRatio,
         });
         const recoveredFromCache =
           cachedTx.length > cloudTx.length ||
@@ -2418,6 +2582,10 @@ export default function AllWin() {
       const loc = normalizeLocale(override?.locale ?? locale);
       const vacMode = override?.vacationMode ?? vacationMode;
       const vacCur = pickVacationCurrency(baseCur, override?.vacationCurrency ?? vacationCurrency);
+      const jars = override?.savingsJars ?? savingsJars;
+      const finSettings = override?.financeSettings ?? financeSettings;
+      const remindersList = override?.reminders ?? reminders;
+      const splitRatio = override?.incomeSplitRatio ?? incomeSplitRatio;
       writeUserStateCache(authUser.id, {
         transactions: txList,
         debts: debtList,
@@ -2429,6 +2597,10 @@ export default function AllWin() {
         locale: loc,
         vacationMode: vacMode,
         vacationCurrency: vacCur,
+        savingsJars: jars,
+        financeSettings: finSettings,
+        reminders: remindersList,
+        incomeSplitRatio: splitRatio,
       });
       const hasMoneyData = txList.length > 0 || debtList.length > 0;
       if (!cloudPersistReadyRef.current && !hasMoneyData && !options?.replaceTransactions && !options?.replaceDebts) {
@@ -2451,6 +2623,10 @@ export default function AllWin() {
         locale: loc,
         vacationMode: vacMode,
         vacationCurrency: vacCur,
+        savingsJars: jars,
+        financeSettings: finSettings,
+        reminders: remindersList,
+        incomeSplitRatio: splitRatio,
       };
       const canCloudPersist = cloudPersistReadyRef.current;
       const clientSavedAt = Date.now();
@@ -2555,6 +2731,10 @@ export default function AllWin() {
       locale,
       vacationMode,
       vacationCurrency,
+      savingsJars,
+      financeSettings,
+      reminders,
+      incomeSplitRatio,
     ],
   );
 
@@ -2644,8 +2824,12 @@ export default function AllWin() {
       baseCurrency,
       vacationMode,
       vacationCurrency,
+      savingsJars,
+      financeSettings,
+      reminders,
+      incomeSplitRatio,
     });
-  }, [authUser?.id, transactions, debts, notgroschenBalance, notgroschenTarget, portfolioBrokerCash, levelUpMode, baseCurrency, vacationMode, vacationCurrency]);
+  }, [authUser?.id, transactions, debts, notgroschenBalance, notgroschenTarget, portfolioBrokerCash, levelUpMode, baseCurrency, vacationMode, vacationCurrency, savingsJars, financeSettings, reminders, incomeSplitRatio]);
 
   useEffect(() => {
     if (!authToken || !authUser?.id) return;
@@ -2722,6 +2906,10 @@ export default function AllWin() {
     watchlistExtras,
     portfolioExcludedBaseSyms,
     dailyVermogenSnapshots,
+    savingsJars,
+    financeSettings,
+    reminders,
+    incomeSplitRatio,
   ]);
 
   /** Anderes Gerät (z. B. iPhone) → beim Zurückkehren Cloud neu laden. */
@@ -2991,6 +3179,48 @@ export default function AllWin() {
     const ms = type === 'error' ? 8000 : 3000;
     setTimeout(() => setToast(null), ms);
   };
+
+  /** Fällige Erinnerungen beim App-Öffnen / Zurückkehren prüfen (kein Server-Push). */
+  useEffect(() => {
+    if (!authUser?.id) return;
+    const userId = authUser.id;
+    const checkDueReminders = () => {
+      const now = new Date();
+      const today = todayIsoDate();
+      const minutesNow = now.getHours() * 60 + now.getMinutes();
+      for (const r of reminders) {
+        if (!r.active || !r.days.includes(now.getDay())) continue;
+        const [h, m] = r.time.split(':').map(Number);
+        if (minutesNow < h * 60 + m) continue;
+        const key = `allwin.reminderShown.${userId}.${r.id}`;
+        try {
+          if (localStorage.getItem(key) === today) continue;
+          localStorage.setItem(key, today);
+        } catch {
+          continue;
+        }
+        const title = translate(`remindersCfg.${r.type}`, locale);
+        const msg = translate(`remindersCfg.${r.type}Msg`, locale);
+        showToast(`${title} — ${msg}`, 'level');
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          try {
+            new Notification(title, { body: msg });
+          } catch {
+            /* ignore */
+          }
+        }
+        // Nur eine Erinnerung pro Öffnen — keine Toast-Flut.
+        break;
+      }
+    };
+    checkDueReminders();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') checkDueReminders();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser?.id, reminders, locale]);
 
   useEffect(() => {
     try {
@@ -3695,6 +3925,45 @@ export default function AllWin() {
       moneyFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }, []);
+
+  /** Splitter/Spardosen: Betrag nach Prozent-Anteilen auf die Dosen verteilen. */
+  const distributeToJars = (amount: number) => {
+    if (amount <= 0) return;
+    if (!savingsJars.some((j) => j.percentage > 0)) {
+      showToast(tr('jars.distributeNoPercent'), 'error');
+      return;
+    }
+    let reached: SavingsJar | null = null;
+    const next = savingsJars.map((j) => {
+      if (j.percentage <= 0) return j;
+      const add = Math.round(amount * j.percentage) / 100;
+      const updated = { ...j, current: roundMoney(j.current + add) };
+      if (!reached && j.current < j.target && updated.current >= updated.target) reached = updated;
+      return updated;
+    });
+    setSavingsJars(next);
+    showToast(tr('toast.jarsDistributed', { amount: fmt(amount) }), 'success');
+    if (reached) setJarCelebration(reached);
+  };
+
+  /** Splitter: Betrag als Einnahme ins Money-Formular übernehmen. */
+  const bookSplitAsIncome = (amount: number) => {
+    if (amount <= 0) return;
+    setEditingTxId(null);
+    setForm((f) => ({
+      ...f,
+      type: 'einnahme',
+      amount: String(amount).replace('.', ','),
+      category: CATS.einnahmen[0],
+      linkedDebtId: '',
+      feeStr: '',
+      taxStr: '',
+      paymentMethod: '',
+    }));
+    setMoneyFormOpen(true);
+    scrollToMoneyForm();
+    showToast(tr('toast.splitFormPrefilled'), 'success');
+  };
 
   const startEditTx = (tx: Transaction) => {
     setEditingTxId(tx.id);
@@ -5417,7 +5686,40 @@ export default function AllWin() {
             ? tr('home.percentOfGoal', { pct: ((notgroschenBalance / notgroschenTarget) * 100).toFixed(0) })
             : tr('home.noGoalYet')}
         </div>
+        {effectiveMonthlyExpenses > 0 &&
+          (() => {
+            const monthsCovered = notgroschenBalance / effectiveMonthlyExpenses;
+            const status = monthsCovered < 1 ? 'red' : monthsCovered < 3 ? 'yellow' : 'green';
+            const color = status === 'red' ? '#ff7b7b' : status === 'yellow' ? '#f8d03a' : '#3fb950';
+            const advice =
+              status === 'red' ? tr('lean.redAdvice') : status === 'yellow' ? tr('lean.yellowAdvice') : tr('lean.greenAdvice');
+            const monthsLabel =
+              monthsCovered >= 12
+                ? tr('lean.monthsLot')
+                : tr('lean.months', { months: monthsCovered.toFixed(1).replace('.', ',') });
+            return (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${awBg.cardBorder}` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span
+                    aria-hidden
+                    style={{ width: 10, height: 10, borderRadius: 99, background: color, boxShadow: `0 0 8px ${color}99`, flexShrink: 0 }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: 800, color }}>{monthsLabel}</span>
+                </div>
+                <div style={{ fontSize: 11, color: '#7d8590', marginTop: 4, lineHeight: 1.45 }}>{advice}</div>
+              </div>
+            );
+          })()}
       </div>
+
+      <SavingsJars
+        locale={locale}
+        jars={savingsJars}
+        fmt={fmt}
+        onChange={setSavingsJars}
+        onGoalReached={(jar) => setJarCelebration(jar)}
+        onInvalid={(msg) => showToast(msg, 'error')}
+      />
 
       {debts.some((d) => d.remaining > 0) && (
         <div style={S.card}>
@@ -5506,6 +5808,18 @@ export default function AllWin() {
           </div>
         </div>
       )}
+
+      <FinancialLevels
+        locale={locale}
+        monthlyExpenses={effectiveMonthlyExpenses}
+        isManualExpenses={typeof financeSettings.monthlyExpenses === 'number'}
+        suggestedExpenses={suggestedMonthlyExpenses}
+        notgroschenBalance={notgroschenBalance}
+        portfolioTotalPower={portfolioTotalPower}
+        fmt={fmt}
+        onSaveMonthlyExpenses={(n) => setFinanceSettings((prev) => ({ ...prev, monthlyExpenses: n }))}
+        onInvalid={(msg) => showToast(msg, 'error')}
+      />
     </div>
   );
 
@@ -5893,6 +6207,94 @@ export default function AllWin() {
                 <span>{notifSettings[k] ? '✅' : '⬜'}</span>
               </button>
             ))}
+
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${awBg.cardBorder}` }}>
+              <div style={{ fontSize: 12, color: '#e6edf3', fontWeight: 800, marginBottom: 4 }}>{tr('remindersCfg.title')}</div>
+              <div style={{ fontSize: 11, color: '#7d8590', lineHeight: 1.5, marginBottom: 10 }}>{tr('remindersCfg.hint')}</div>
+              {(() => {
+                const dayLabels = tr('remindersCfg.daysShort').split(',');
+                const dayOrder = [1, 2, 3, 4, 5, 6, 0];
+                return reminders.map((r) => (
+                  <div key={r.id} style={{ padding: '10px 0', borderBottom: `1px solid ${awBg.cardBorder}` }}>
+                    <button
+                      type="button"
+                      style={{ ...S.row, width: '100%', background: 'transparent', border: 'none', color: '#e6edf3', padding: 0, cursor: 'pointer' }}
+                      onClick={() =>
+                        setReminders((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: !x.active } : x)))
+                      }
+                    >
+                      <span style={{ fontSize: 13, fontWeight: 700 }}>{tr(`remindersCfg.${r.type}`)}</span>
+                      <span>{r.active ? '✅' : '⬜'}</span>
+                    </button>
+                    {r.active && (
+                      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <input
+                            type="time"
+                            value={r.time}
+                            aria-label={tr(`remindersCfg.${r.type}`)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (!/^\d{2}:\d{2}$/.test(v)) return;
+                              setReminders((prev) => prev.map((x) => (x.id === r.id ? { ...x, time: v } : x)));
+                            }}
+                            style={{ ...S.input, width: 110, padding: '6px 10px', fontSize: 13 }}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {dayOrder.map((day) => {
+                            const on = r.days.includes(day);
+                            return (
+                              <button
+                                key={day}
+                                type="button"
+                                style={{
+                                  background: on ? '#2563eb' : awBg.chipOff,
+                                  color: on ? '#fff' : '#8b949e',
+                                  border: `1px solid ${on ? '#2563eb' : awBg.line}`,
+                                  borderRadius: 8,
+                                  padding: '5px 9px',
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                }}
+                                onClick={() =>
+                                  setReminders((prev) =>
+                                    prev.map((x) => {
+                                      if (x.id !== r.id) return x;
+                                      const days = x.days.includes(day)
+                                        ? x.days.filter((d) => d !== day)
+                                        : [...x.days, day].sort((a, b) => a - b);
+                                      return { ...x, days };
+                                    }),
+                                  )
+                                }
+                              >
+                                {dayLabels[day] ?? String(day)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ));
+              })()}
+              {notifPermission !== 'unsupported' && notifPermission !== 'granted' && (
+                <button
+                  type="button"
+                  style={{ ...S.chip(false), marginTop: 12, width: '100%' }}
+                  onClick={() => {
+                    void Notification.requestPermission().then((p) => setNotifPermission(p));
+                  }}
+                >
+                  {tr('remindersCfg.browserPerm')}
+                </button>
+              )}
+              {notifPermission === 'granted' && (
+                <div style={{ fontSize: 11, color: '#3fb950', marginTop: 10 }}>{tr('remindersCfg.browserPermGranted')}</div>
+              )}
+            </div>
           </div>
         );
       case 'orden':
@@ -6525,6 +6927,19 @@ export default function AllWin() {
         </>
         )}
       </div>
+
+      <IncomeSplitter
+        locale={locale}
+        ratio={incomeSplitRatio}
+        onRatioChange={setIncomeSplitRatio}
+        fmt={fmt}
+        hasOpenDebts={debts.some((d) => d.remaining > 0)}
+        hasJars={savingsJars.some((j) => j.percentage > 0)}
+        onGoToBoost={() => setTab('debts')}
+        onDistributeToJars={distributeToJars}
+        onBookAsIncome={bookSplitAsIncome}
+        onInvalid={(msg) => showToast(msg, 'error')}
+      />
 
       {renderMoneyRecentTxList()}
 
@@ -7429,6 +7844,39 @@ export default function AllWin() {
         )}
       </div>
 
+      {(() => {
+        const goosePct = financeSettings.gooseReturnPercent ?? 6;
+        const monthlyEggs = Math.round(((portfolioTotalPower * goosePct) / 100 / 12) * 100) / 100;
+        return (
+          <div data-tour="levelup-goose" style={{ ...S.card, border: '1px solid #f8d03a33' }}>
+            <div style={S.label}>{tr('goose.cardTitle')}</div>
+            <div style={{ fontSize: 11, color: '#7d8590', marginBottom: 4 }}>{tr('goose.eggsLine')}</div>
+            <div style={{ fontSize: 26, fontWeight: 800, color: '#f8d03a' }}>{fmt(monthlyEggs)}</div>
+            <div style={{ fontSize: 11, color: '#7d8590', marginTop: 6, lineHeight: 1.5 }}>
+              {tr('goose.hint', { total: fmt(portfolioTotalPower), pct: String(goosePct).replace('.', ',') })}
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11, color: '#8b949e', fontWeight: 700, marginBottom: 4 }}>
+                {tr('goose.returnLabel')}: {String(goosePct).replace('.', ',')} %
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={15}
+                step={0.5}
+                value={goosePct}
+                aria-label={tr('goose.returnLabel')}
+                onChange={(e) =>
+                  setFinanceSettings((prev) => ({ ...prev, gooseReturnPercent: Number(e.target.value) }))
+                }
+                style={{ width: '100%', accentColor: '#f8d03a' }}
+              />
+            </div>
+            <div style={{ fontSize: 11, color: '#6e7681', marginTop: 8, fontStyle: 'italic' }}>{tr('goose.rule')}</div>
+          </div>
+        );
+      })()}
+
       {renderMarket({ collapsible: true })}
     </div>
   );
@@ -8123,6 +8571,17 @@ export default function AllWin() {
 
       <DebtZeroVictoryOverlay open={debtVictoryOpen} onClose={() => setDebtVictoryOpen(false)} locale={locale} />
       <NotgroschenFullOverlay open={notgroschenVictoryOpen} onClose={() => setNotgroschenVictoryOpen(false)} locale={locale} />
+      <CelebrationCard
+        open={jarCelebration != null}
+        onClose={() => setJarCelebration(null)}
+        zIndex={5000}
+        icon={jarCelebration?.emoji || '🫙'}
+        accent="#3fb950"
+        confettiCount={16}
+        title={tr('overlay.jarFullTitle')}
+        body={tr('overlay.jarFullBody', { name: jarCelebration?.name || '', target: fmt(jarCelebration?.target || 0) })}
+        actionLabel={tr('overlay.jarFullAction')}
+      />
       <AppGuideTour open={appTourOpen} steps={appTourSteps} locale={locale} onClose={closeAppTour} onTabChange={setTab} />
       <PortfolioPowerMilestoneOverlay
         open={portfolioMilestoneOpen}

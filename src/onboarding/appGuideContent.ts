@@ -45,6 +45,14 @@ const DE_STEPS: AppTourStep[] = [
       'Dein Sicherheitspolster mit Fortschrittsbalken. Stand anpassen: oben rechts auf der Karte ⋮ → „Stand bearbeiten“.',
   },
   {
+    id: 'home-jars',
+    tab: 'dashboard',
+    target: 'home-jars',
+    title: 'Spardosen',
+    message:
+      'Gib deinem Geld eine Mission: Ziele mit Name, Emoji und Zielbetrag anlegen, Anteile festlegen und mit „Betrag verteilen“ alle Dosen auf einmal befüllen. Bei Zielerreichung gibt’s Konfetti.',
+  },
+  {
     id: 'home-portfolio',
     tab: 'dashboard',
     target: 'home-portfolio',
@@ -52,6 +60,14 @@ const DE_STEPS: AppTourStep[] = [
     message:
       'Gesamt = investierte Positionen + Cash Depot. Details, Orders und Live-Kurse findest du unter LevelUp.',
     requiresLevelUpUnlocked: true,
+  },
+  {
+    id: 'home-levels',
+    tab: 'dashboard',
+    target: 'home-levels',
+    title: 'Finanzielle Stufen',
+    message:
+      'Deine Roadmap: Schutz → Sicherheit → Freiheit. Gib deine monatlichen Kosten an, und die App berechnet alle Stufenziele — der Fortschritt kommt automatisch aus Notgroschen und Portfolio Power.',
   },
   {
     id: 'money-receipt',
@@ -158,6 +174,14 @@ const EN_STEPS: AppTourStep[] = [
       'Your safety cushion with progress bar. Adjust balance: top right on the card ⋮ → "Edit balance".',
   },
   {
+    id: 'home-jars',
+    tab: 'dashboard',
+    target: 'home-jars',
+    title: 'Savings jars',
+    message:
+      'Give your money a mission: create goals with name, emoji and target, set shares, and fill all jars at once with "Distribute amount". Confetti when a goal is reached.',
+  },
+  {
     id: 'home-portfolio',
     tab: 'dashboard',
     target: 'home-portfolio',
@@ -165,6 +189,14 @@ const EN_STEPS: AppTourStep[] = [
     message:
       'Total = invested positions + cash depot. Details, orders and live prices are under LevelUp.',
     requiresLevelUpUnlocked: true,
+  },
+  {
+    id: 'home-levels',
+    tab: 'dashboard',
+    target: 'home-levels',
+    title: 'Financial levels',
+    message:
+      'Your roadmap: protection → security → freedom. Enter your monthly expenses and the app calculates all level goals — progress comes automatically from your emergency fund and Portfolio Power.',
   },
   {
     id: 'money-receipt',
